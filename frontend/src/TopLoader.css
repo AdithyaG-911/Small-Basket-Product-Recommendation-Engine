@@ -1,0 +1,51 @@
+.top-loader-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background-color: transparent;
+  z-index: 99999;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.top-loader-bar {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background-color: #84c225; /* BigBasket green */
+  transform-origin: center;
+  animation: bb-loader-scale 1.5s infinite ease-in-out;
+}
+
+.top-loader-highlight {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  animation: bb-loader-highlight 1.5s infinite linear;
+}
+
+@keyframes bb-loader-scale {
+  0% {
+    transform: scaleX(1);
+  }
+  50% {
+    transform: scaleX(0.2);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes bb-loader-highlight {
+  0% {
+    left: -50%;
+  }
+  100% {
+    left: 150%;
+  }
+}

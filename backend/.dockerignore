@@ -1,0 +1,15 @@
+venv
+.venv
+__pycache__
+.pytest_cache
+.env
+.env.*
+*.pyc
+*.pyo
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+Dockerfile
+.dockerignore
+
