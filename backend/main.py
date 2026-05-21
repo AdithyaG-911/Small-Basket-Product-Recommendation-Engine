@@ -4,13 +4,15 @@ Recommends based on: browsing history + purchase history + product similarity
 Uses trained ML models with 99% accuracy
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Boolean, inspect, text, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, relationship, Session, declarative_base
 from pydantic import BaseModel
-from datetime import datetime
 import json
+import csv
+import hashlib
 from typing import List, Optional
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -36,6 +38,14 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bool(hashed) and hash_password(password) == hashed
+
 # ============================================================================
 # DATABASE MODELS
 # ============================================================================
@@ -46,6 +56,7 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     category = Column(String)
+    brand = Column(String, nullable=True)
     price = Column(Float)
     description = Column(String)
     image_url = Column(String, nullable=True)
@@ -54,6 +65,17 @@ class Product(Base):
     cart_items = relationship("CartItem", back_populates="product")
     order_items = relationship("OrderItem", back_populates="product")
     browsing_history = relationship("BrowsingHistory", back_populates="product")
+    reviews = relationship("Review", back_populates="product", cascade="all, delete-orphan")
+
+    @property
+    def rating(self):
+        if not self.reviews:
+            return None
+        return round(sum(r.rating for r in self.reviews) / len(self.reviews), 1)
+        
+    @property
+    def reviewsCount(self):
+        return len(self.reviews)
 
 
 class User(Base):
@@ -62,6 +84,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     email = Column(String, unique=True, index=True)
+    password_hash = Column(String, nullable=True)
     full_name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     is_admin = Column(Boolean, default=False)
@@ -69,6 +92,7 @@ class User(Base):
     cart = relationship("CartItem", back_populates="user", cascade="all, delete-orphan")
     orders = relationship("Order", back_populates="user", cascade="all, delete-orphan")
     browsing_history = relationship("BrowsingHistory", back_populates="user", cascade="all, delete-orphan")
+    reviews = relationship("Review", back_populates="user_rel", cascade="all, delete-orphan")
 
 
 class CartItem(Base):
@@ -91,6 +115,8 @@ class Order(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     total_price = Column(Float)
     status = Column(String, default="Pending")
+    payment_method = Column(String, nullable=True)
+    payment_status = Column(String, default="Pending")
     
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order")
@@ -134,6 +160,29 @@ class ProductClick(Base):
     product = relationship("Product")
 
 
+class Review(Base):
+    __tablename__ = "reviews"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
+    rating = Column(Float)
+    comment = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    product = relationship("Product", back_populates="reviews")
+    user_rel = relationship("User", back_populates="reviews")
+
+    @property
+    def user(self):
+        return self.user_rel.username if self.user_rel else "Anonymous"
+
+    @property
+    def date(self):
+        return self.created_at.strftime("%Y-%m-%d") if self.created_at else ""
+
+
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
@@ -144,11 +193,17 @@ def ensure_product_columns():
     if "product_url" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE products ADD COLUMN product_url VARCHAR"))
+    if "brand" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE products ADD COLUMN brand VARCHAR"))
 
 def ensure_user_columns():
     inspector = inspect(engine)
     columns = {column["name"] for column in inspector.get_columns("users")}
 
+    if "password_hash" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR"))
     if "full_name" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE users ADD COLUMN full_name VARCHAR"))
@@ -159,6 +214,7 @@ def ensure_user_columns():
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
 
+
 def ensure_order_columns():
     inspector = inspect(engine)
     columns = {column["name"] for column in inspector.get_columns("orders")}
@@ -166,18 +222,175 @@ def ensure_order_columns():
     if "status" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE orders ADD COLUMN status VARCHAR DEFAULT 'Pending'"))
+    if "payment_method" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE orders ADD COLUMN payment_method VARCHAR"))
+    if "payment_status" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE orders ADD COLUMN payment_status VARCHAR DEFAULT 'Pending'"))
 
 ensure_product_columns()
 ensure_user_columns()
 ensure_order_columns()
 
+
+def get_image_url(category, product_name, index):
+    image_ids = {
+        'beauty & hygiene': [201, 202, 203, 204, 205, 206, 207, 208, 209, 210],
+        'bath & hand wash': [211, 212, 213, 214, 215, 216, 217, 218, 219, 220],
+        'cosmetics': [221, 222, 223, 224, 225, 226, 227, 228, 229, 230],
+        'skincare': [231, 232, 233, 234, 235, 236, 237, 238, 239, 240],
+        'haircare': [241, 242, 243, 244, 245, 246, 247, 248, 249, 250],
+        'nutrition': [251, 252, 253, 254, 255, 256, 257, 258, 259, 260],
+        'groceries': [261, 262, 263, 264, 265, 266, 267, 268, 269, 270],
+        'fresh produce': [271, 272, 273, 274, 275, 276, 277, 278, 279, 280],
+        'fruits': [281, 282, 283, 284, 285, 286, 287, 288, 289, 290],
+        'electronics': [291, 292, 293, 294, 295, 296, 297, 298, 299, 300],
+        'fashion': [301, 302, 303, 304, 305, 306, 307, 308, 309, 310],
+        'home': [311, 312, 313, 314, 315, 316, 317, 318, 319, 320],
+        'sports': [321, 322, 323, 324, 325, 326, 327, 328, 329, 330],
+        'books': [331, 332, 333, 334, 335, 336, 337, 338, 339, 340],
+        'toys': [341, 342, 343, 344, 345, 346, 347, 348, 349, 350],
+        'food': [351, 352, 353, 354, 355, 356, 357, 358, 359, 360],
+    }
+    category_lower = (category or '').strip().lower()
+    ids = image_ids.get(category_lower, [101, 102, 103, 104, 105])
+    img_id = ids[index % len(ids)]
+    return f"https://picsum.photos/400/300?random={img_id}"
+
+
+def pick_csv_path(csv_file=None):
+    preferred_files = [
+        csv_file,
+        os.path.join(MODEL_DIR, 'lastcleaned_data.csv'),
+        os.path.join(MODEL_DIR, 'final_dataset.csv'),
+    ]
+    for candidate in preferred_files:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def seed_products_from_csv(csv_file=None, limit=2000, replace=False):
+    db = SessionLocal()
+    try:
+        csv_path = pick_csv_path(csv_file)
+        if not csv_path:
+            print('CSV file not found. Falling back to synthetic product seed.')
+            return seed_synthetic(num_products=200)
+
+        if replace:
+            deleted = db.query(Product).delete()
+            db.commit()
+            print(f'Cleared {deleted} existing products before reseeding.')
+
+        with open(csv_path, 'r', encoding='utf-8', errors='replace') as file:
+            reader = csv.DictReader(file)
+            count = 0
+            for row in reader:
+                if limit and count >= limit:
+                    break
+                category = row.get('Category') or row.get('category') or 'General'
+                sku_name = row.get('SKU Name') or row.get('name') or 'Product'
+                brand = row.get('Brand') or row.get('brand') or ''
+                price = row.get('MRP') or row.get('price') or '100'
+                description = row.get('About the Product') or row.get('description') or ''
+                image_url = row.get('Image Link') or row.get('image_url') or get_image_url(category, sku_name, count)
+                product_url = row.get('Product Link') or row.get('product_url') or None
+
+                try:
+                    parsed_price = float(price)
+                except ValueError:
+                    parsed_price = 100.0
+                if parsed_price <= 0:
+                    parsed_price = 100.0
+
+                product = Product(
+                    name=sku_name[:200],
+                    category=category[:100],
+                    brand=brand[:100] if brand else None,
+                    description=description[:500],
+                    price=parsed_price,
+                    image_url=image_url,
+                    product_url=product_url,
+                )
+                db.add(product)
+                count += 1
+
+                if count % 50 == 0:
+                    db.commit()
+                    print(f'Loaded {count} products...')
+            db.commit()
+            print(f'Loaded {count} products from {os.path.basename(csv_path)}')
+            return count
+    except Exception as error:
+        print(f'Error loading CSV: {error}')
+        db.rollback()
+    finally:
+        db.close()
+
+
+def seed_synthetic(num_products=100):
+    db = SessionLocal()
+    categories = ['beauty & hygiene', 'Electronics', 'Fashion', 'Home & Garden', 'Sports', 'Books', 'Groceries', 'Toys']
+    product_types = ['Premium', 'Professional', 'Ultra', 'Pro', 'Standard', 'Deluxe', 'Elite', 'Essential']
+    try:
+        existing = db.query(Product).count()
+        if existing > 0:
+            print(f'Database already has {existing} products, skipping synthetic seed')
+            return existing
+
+        for i in range(num_products):
+            category = categories[i % len(categories)]
+            product_type = product_types[i % len(product_types)]
+            product_name = f"{product_type} {category.split()[0]} Item {i + 1}"
+            image_url = get_image_url(category, product_name, i)
+            product = Product(
+                name=product_name,
+                category=category,
+                brand=product_type,
+                description=f'High quality {category.lower()} product with amazing features. Perfect for daily use.',
+                price=float(50 + (i % 500)),
+                image_url=image_url,
+                product_url=None,
+            )
+            db.add(product)
+            if (i + 1) % 50 == 0:
+                db.commit()
+        db.commit()
+        print(f'Successfully created {num_products} synthetic products with images')
+        return num_products
+    except Exception as error:
+        print(f'Error creating synthetic data: {error}')
+        db.rollback()
+    finally:
+        db.close()
+
 # ============================================================================
 # PYDANTIC SCHEMAS
 # ============================================================================
 
+class ReviewCreate(BaseModel):
+    rating: float
+    comment: str
+
+class ReviewResponse(BaseModel):
+    id: int
+    product_id: int
+    user_id: int
+    rating: float
+    comment: str
+    user: str
+    date: str
+    
+    class Config:
+        orm_mode = True
+        from_attributes = True
+
 class ProductCreate(BaseModel):
     name: str
     category: str
+    brand: Optional[str] = None
     price: float
     description: str
     image_url: Optional[str] = None
@@ -187,10 +400,14 @@ class ProductResponse(BaseModel):
     id: int
     name: str
     category: str
+    brand: Optional[str] = None
     price: float
     description: str
     image_url: Optional[str] = None
     product_url: Optional[str] = None
+    rating: Optional[float] = None
+    reviewsCount: int = 0
+    reviews: List[ReviewResponse] = []
     
     class Config:
         orm_mode = True
@@ -201,10 +418,14 @@ class ProductRecommendationResponse(BaseModel):
     id: int
     name: str
     category: str
+    brand: Optional[str] = None
     price: float
     description: str
     image_url: Optional[str] = None
     product_url: Optional[str] = None
+    rating: Optional[float] = None
+    reviewsCount: int = 0
+    reviews: List[ReviewResponse] = []
     recommendation_reason: str = "Recommended for you"  # Explainable AI reason
     recommendation_type: str = "general"  # Type: weather, seasonal, purchase, click, similar, festival
     confidence_score: float = 0.5  # Score from 0-1
@@ -222,6 +443,11 @@ class PaginatedProductResponse(BaseModel):
 class UserCreate(BaseModel):
     username: str
     email: str
+    password: Optional[str] = None
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
@@ -263,11 +489,31 @@ class OrderResponse(BaseModel):
     id: int
     created_at: datetime
     total_price: float
+    status: str
+    payment_method: Optional[str] = None
+    payment_status: str
     items: List[OrderItemResponse]
     
     class Config:
         orm_mode = True
         from_attributes = True
+
+class CheckoutPayload(BaseModel):
+    payment_method: Optional[str] = None
+    shipping_address: Optional[str] = None
+
+class PurchaseItem(BaseModel):
+    product_id: int
+    quantity: int = 1
+
+class PurchaseHistoryPayload(BaseModel):
+    items: List[PurchaseItem] = []
+    ts: Optional[int] = None
+
+class OrderUpdate(BaseModel):
+    status: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_status: Optional[str] = None
 
 # ============================================================================
 # FASTAPI APP
@@ -277,19 +523,32 @@ app = FastAPI(title="E-Commerce API", version="1.0.0")
 
 # CORS
 default_frontend_urls = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv("FRONTEND_URL", default_frontend_urls).split(",")
-    if origin.strip()
-]
+frontend_env = os.getenv("FRONTEND_URL", default_frontend_urls).strip()
+allowed_origins = [origin.strip() for origin in frontend_env.split(",") if origin.strip()] if frontend_env and frontend_env != '*' else ["*"]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+print(f"[startup] CORS allowed_origins={allowed_origins}")
+
+
+@app.on_event("startup")
+def _print_startup_info():
+    # Helpful debug info when troubleshooting CORS in development
+    print("FastAPI starting up. FRONTEND_URL:", os.getenv("FRONTEND_URL"))
+    print("CORS configured allowed_origins:", allowed_origins)
+
+
+@app.get("/api/health")
+def health_check():
+    """Lightweight health endpoint to verify server is running and CORS headers are present."""
+    return {"ok": True, "allowed_origins": allowed_origins}
 
 def get_db():
     db = SessionLocal()
@@ -1095,10 +1354,21 @@ def get_admin_stats(db: Session = Depends(get_db)):
             "orders": total_orders
         },
         "recent_orders": [
-            {"id": o.id, "user_id": o.user_id, "username": o.user.username, "total_price": o.total_price, "status": o.status, "created_at": str(o.created_at)}
+            {"id": o.id, "user_id": o.user_id, "username": o.user.username, "total_price": o.total_price, "status": o.status, "payment_method": o.payment_method, "payment_status": o.payment_status, "created_at": str(o.created_at)}
             for o in recent_orders
         ]
     }
+
+@app.put("/api/admin/orders/{order_id}")
+def update_order_admin(order_id: int, order_update: OrderUpdate, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    update_data = order_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(order, key, value)
+    db.commit()
+    return {"status": "order updated", "order_id": order.id}
 
 @app.get("/api/admin/users")
 def get_all_users_admin(db: Session = Depends(get_db)):
@@ -1139,16 +1409,35 @@ def delete_user_admin(user_id: int, db: Session = Depends(get_db)):
 # --- USERS ---
 @app.post("/api/users", response_model=UserResponse)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
-    # Check if user already exists
-    existing_user = db.query(User).filter(User.email == user.email).first()
-    if existing_user:
-        return existing_user
-        
-    db_user = User(**user.dict())
+    # Prevent duplicate accounts by email or username
+    existing_by_email = db.query(User).filter(User.email == user.email).first()
+    if existing_by_email:
+        # If password provided, allow login-like behavior when hashes match
+        if user.password and verify_password(user.password, existing_by_email.password_hash or ""):
+            return existing_by_email
+        raise HTTPException(status_code=400, detail="Account already exists with this email")
+
+    existing_by_username = db.query(User).filter(User.username == user.username).first()
+    if existing_by_username:
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    password_hash = hash_password(user.password) if user.password else None
+    db_user = User(username=user.username, email=user.email, password_hash=password_hash)
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
+    try:
+        db.commit()
+        db.refresh(db_user)
+        return db_user
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Could not create user (unique constraint)")
+
+@app.post("/api/login", response_model=UserResponse)
+def login_user(credentials: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == credentials.email).first()
+    if not user or not verify_password(credentials.password, user.password_hash or ""):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return user
 
 @app.get("/api/users/{user_id}", response_model=UserResponse)
 def get_user(user_id: int, db: Session = Depends(get_db)):
@@ -1156,6 +1445,21 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+@app.post("/api/users/{user_id}/purchases")
+def record_purchases(user_id: int, purchase_history: PurchaseHistoryPayload, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    recorded = 0
+    for item in purchase_history.items:
+        product = db.query(Product).filter(Product.id == item.product_id).first()
+        if product:
+            click = ProductClick(user_id=user_id, product_id=product.id)
+            db.add(click)
+            recorded += 1
+    db.commit()
+    return {"status": "recorded", "recorded": recorded}
 
 @app.put("/api/users/{user_id}", response_model=UserResponse)
 def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get_db)):
@@ -1419,7 +1723,7 @@ def get_similar_products(product_id: int, db: Session = Depends(get_db)):
 
 # --- ORDERS ---
 @app.post("/api/users/{user_id}/checkout", response_model=OrderResponse)
-def checkout(user_id: int, db: Session = Depends(get_db)):
+def checkout(user_id: int, payload: CheckoutPayload = Body(default=None), db: Session = Depends(get_db)):
     """Convert cart to order"""
     cart_items = db.query(CartItem).filter(CartItem.user_id == user_id).all()
     
@@ -1427,9 +1731,18 @@ def checkout(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Cart is empty")
     
     total_price = sum(item.product.price * item.quantity for item in cart_items)
+    payment_method = payload.payment_method if payload else None
+    payment_status = "Paid" if payment_method and payment_method.lower() != "cod" else "Pending"
+    order_status = "Confirmed" if payment_method else "Pending"
     
     # Create order
-    order = Order(user_id=user_id, total_price=total_price)
+    order = Order(
+        user_id=user_id,
+        total_price=total_price,
+        payment_method=payment_method,
+        payment_status=payment_status,
+        status=order_status
+    )
     db.add(order)
     db.flush()
     
@@ -1455,6 +1768,131 @@ def checkout(user_id: int, db: Session = Depends(get_db)):
 def get_user_orders(user_id: int, db: Session = Depends(get_db)):
     orders = db.query(Order).filter(Order.user_id == user_id).all()
     return orders
+
+# --- RATINGS & REVIEWS ---
+@app.post("/api/products/{product_id}/reviews", response_model=ReviewResponse)
+def create_review(product_id: int, review: ReviewCreate, user_id: int, db: Session = Depends(get_db)):
+    # Verify product exists
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    # Verify user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    db_review = Review(
+        product_id=product_id,
+        user_id=user_id,
+        rating=review.rating,
+        comment=review.comment
+    )
+    db.add(db_review)
+    db.commit()
+    db.refresh(db_review)
+    return db_review
+
+@app.get("/api/products/{product_id}/reviews", response_model=List[ReviewResponse])
+def get_product_reviews(product_id: int, db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return product.reviews
+
+@app.on_event("startup")
+def startup_event():
+    db = SessionLocal()
+    try:
+        # Check if we have products, seed from CSV or synthetic source
+        products_count = db.query(Product).count()
+        if products_count == 0:
+            print("No products found. Auto-seeding catalog from CSV or synthetic fallback...")
+            seeded = seed_products_from_csv(limit=2000)
+            if seeded:
+                print(f"Seeded {seeded} products into the catalog.")
+            products_count = db.query(Product).count()
+
+        # Check if we have users, seed some if not
+        users_count = db.query(User).count()
+        if users_count == 0:
+            user_data = [
+                {"username": "Adithya", "email": "adithya@example.com", "full_name": "Adithya G"},
+                {"username": "RohanK", "email": "rohan@example.com", "full_name": "Rohan Kumar"},
+                {"username": "JaneDoe", "email": "jane@example.com", "full_name": "Jane Doe"},
+                {"username": "AnitaS", "email": "anita@example.com", "full_name": "Anita Sharma"}
+            ]
+            for u in user_data:
+                db_user = User(username=u["username"], email=u["email"], full_name=u["full_name"])
+                db.add(db_user)
+            db.commit()
+            print("Seeded default users.")
+        
+        # Get all users to attribute reviews
+        users = db.query(User).all()
+        if not users:
+            return
+            
+        # Check if reviews table is empty
+        reviews_count = db.query(Review).count()
+        if reviews_count == 0:
+            print("Seeding database with realistic reviews...")
+            products = db.query(Product).all()
+            
+            import random
+            comments_good = [
+                "Absolutely loved it! Very fresh and great packaging.",
+                "High quality product, value for money. Highly recommend!",
+                "Best purchase ever. Standard Big Basket level quality.",
+                "Extremely fresh and delivered on time. 5 stars!",
+                "Super convenient and tastes/feels premium. Will buy again.",
+                "Highly satisfied with the product! Excellent quality."
+            ]
+            comments_avg = [
+                "Decent product. Quality is fine but delivery took some time.",
+                "Average quality. Nothing extraordinary but works.",
+                "Okay product. Price could be a bit lower for this quality.",
+                "Good product but packaging was slightly damaged."
+            ]
+            comments_poor = [
+                "Disappointed. Not as described, quality is subpar.",
+                "Not fresh at all. Would not recommend buying this.",
+                "Poor experience. Below average quality."
+            ]
+            
+            for p in products:
+                # Seed 2-3 reviews per product
+                num_reviews = random.randint(2, 4)
+                # Ensure each product gets at least some reviews
+                selected_users = random.sample(users, min(len(users), num_reviews))
+                for user in selected_users:
+                    # Let's give mostly positive ratings with occasional average/poor
+                    roll = random.random()
+                    if roll > 0.3:
+                        rating = float(random.randint(4, 5))
+                        comment = random.choice(comments_good)
+                    elif roll > 0.08:
+                        rating = float(random.randint(3, 4))
+                        comment = random.choice(comments_avg)
+                    else:
+                        rating = float(random.randint(1, 2))
+                        comment = random.choice(comments_poor)
+                    
+                    review = Review(
+                        product_id=p.id,
+                        user_id=user.id,
+                        rating=rating,
+                        comment=comment,
+                        created_at=datetime.utcnow()
+                    )
+                    db.add(review)
+            db.commit()
+            print("Database successfully seeded with reviews.")
+    except Exception as e:
+        print(f"Error during startup seeding: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     import uvicorn

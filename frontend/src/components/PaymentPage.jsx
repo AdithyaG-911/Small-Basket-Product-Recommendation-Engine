@@ -29,6 +29,33 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
   const total = subtotal + deliveryCharge + handlingCharge
   const savings = cart.reduce((s, i) => s + ((i.product?.mrp || i.product?.price || 0) - (i.product?.price || 0)) * i.quantity, 0)
 
+  const getSelectedPaymentMethod = () => {
+    if (tab === 'card') {
+      return cardNum.trim() ? 'Card' : ''
+    }
+    if (tab === 'netbanking') {
+      return selectedBank ? `Netbanking - ${selectedBank}` : ''
+    }
+    if (tab === 'wallet') {
+      return selectedWallet ? `Wallet - ${selectedWallet}` : ''
+    }
+    if (tab === 'upi') {
+      if (upiId.trim()) return `UPI - ${upiId}`
+      if (selectedWallet) return `UPI - ${selectedWallet}`
+      return ''
+    }
+    if (tab === 'cod') return 'Cash on Delivery'
+    return ''
+  }
+
+  const handlePayNow = () => {
+    const method = getSelectedPaymentMethod()
+    if (tab !== 'cod' && !method) {
+      return
+    }
+    onCompletePayment(method)
+  }
+
   const tabs = [
     { id: 'upi', label: 'UPI', icon: '⚡' },
     { id: 'card', label: 'Credit / Debit Card', icon: '💳' },
@@ -167,7 +194,7 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
 
               {/* Pay button */}
               <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'row-reverse', gap: '12px' }}>
-                <button type="button" onClick={onCompletePayment} disabled={checkoutLoading} style={{ height: '40px', width: '13.5rem', background: checkoutLoading ? '#ccc' : RED, color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 600, fontSize: '16px', cursor: checkoutLoading ? 'not-allowed' : 'pointer', letterSpacing: '0.25px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }}>
+                <button type="button" onClick={handlePayNow} disabled={checkoutLoading} style={{ height: '40px', width: '13.5rem', background: checkoutLoading ? '#ccc' : RED, color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 600, fontSize: '16px', cursor: checkoutLoading ? 'not-allowed' : 'pointer', letterSpacing: '0.25px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }}>
                   {checkoutLoading ? 'Placing order…' : `Pay ₹${total.toFixed(2)}`}
                 </button>
                 <button type="button" onClick={onBack} style={{ height: '40px', padding: '0 20px', background: '#fff', border: '0.8px solid #ccc', borderRadius: '4px', color: '#555', fontWeight: 600, cursor: 'pointer', fontSize: '14px', fontFamily: 'inherit' }}>

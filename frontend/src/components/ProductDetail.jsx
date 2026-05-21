@@ -15,7 +15,9 @@ export default function ProductDetail({
   onToggleSave, 
   isSaved,
   cartItemQuantities,
-  onUpdateQuantity
+  onUpdateQuantity,
+  userId,
+  showToast
 }) {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -23,6 +25,113 @@ export default function ProductDetail({
   const [loading, setLoading] = useState(!product)
   const [selectedImage, setSelectedImage] = useState(product?.image_url)
   const [similarProducts, setSimilarProducts] = useState([])
+
+  const [starHover, setStarHover] = useState(0)
+  const [starSelected, setStarSelected] = useState(0)
+  const [reviewComment, setReviewComment] = useState('')
+  const [submittingReview, setSubmittingReview] = useState(false)
+
+  const renderStarsSelector = () => {
+    return (
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', margin: '10px 0 10px 0' }}>
+        {[1, 2, 3, 4, 5].map((star) => {
+          const isFilled = starHover >= star || (starHover === 0 && starSelected >= star);
+          return (
+            <svg
+              key={star}
+              onMouseEnter={() => {
+                if (userId) setStarHover(star);
+              }}
+              onMouseLeave={() => {
+                if (userId) setStarHover(0);
+              }}
+              onClick={() => {
+                if (userId) setStarSelected(star);
+              }}
+              width="30"
+              height="30"
+              viewBox="0 0 24 24"
+              style={{
+                cursor: userId ? 'pointer' : 'not-allowed',
+                transition: 'transform 0.15s ease-in-out',
+                transform: (starHover === star && userId) ? 'scale(1.25)' : 'scale(1)',
+                color: isFilled ? '#f7c948' : '#e0e0e0'
+              }}
+              fill={isFilled ? '#f7c948' : 'none'}
+              stroke={isFilled ? '#f7c948' : '#ccc'}
+              strokeWidth="1.5"
+            >
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+            </svg>
+          )
+        })}
+        {starSelected > 0 && (
+          <span style={{ fontSize: '13px', color: '#666', marginLeft: '10px', fontWeight: 600 }}>
+            {starSelected} star{starSelected > 1 ? 's' : ''} selected
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  const handleReviewSubmit = async (e) => {
+    e.preventDefault()
+    if (!userId) {
+      if (showToast) showToast('Please sign in to write a review', 'error')
+      return
+    }
+    if (starSelected === 0) {
+      if (showToast) showToast('Please select a star rating', 'error')
+      return
+    }
+    if (!reviewComment.trim()) {
+      if (showToast) showToast('Please enter your review comments', 'error')
+      return
+    }
+
+    setSubmittingReview(true)
+    try {
+      const response = await fetch(`${API_BASE}/products/${productData.id}/reviews?user_id=${userId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          rating: parseFloat(starSelected),
+          comment: reviewComment.trim()
+        })
+      })
+
+      if (!response.ok) {
+        const errData = await response.json()
+        throw new Error(errData.detail || 'Failed to submit review')
+      }
+
+      const newReview = await response.json()
+      
+      // Update local state productData
+      const updatedReviews = [newReview, ...(productData.reviews || [])]
+      const totalRating = updatedReviews.reduce((sum, r) => sum + r.rating, 0)
+      const averageRating = (totalRating / updatedReviews.length).toFixed(1)
+
+      setProductData({
+        ...productData,
+        reviews: updatedReviews,
+        reviewsCount: updatedReviews.length,
+        rating: parseFloat(averageRating)
+      })
+
+      // Reset form state
+      setStarSelected(0)
+      setReviewComment('')
+      if (showToast) showToast('Review submitted successfully!', 'success')
+    } catch (error) {
+      console.error('Error submitting review:', error)
+      if (showToast) showToast(error.message || 'Error submitting review. Please try again.', 'error')
+    } finally {
+      setSubmittingReview(false)
+    }
+  }
 
   useEffect(() => {
     if (!productData && id) {
@@ -247,13 +356,14 @@ export default function ProductDetail({
             </p>
           </div>
           
-          {/* Reviews Section */}
-          {productData.reviews && productData.reviews.length > 0 && (
-            <div style={{ marginTop: '40px', borderTop: '1px dashed #eee', paddingTop: '20px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '20px' }}>Ratings & Reviews</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Ratings & Reviews Section */}
+          <div style={{ marginTop: '40px', borderTop: '1px dashed #eee', paddingTop: '20px' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '20px', color: DARK }}>Ratings & Reviews</h3>
+            
+            {productData.reviews && productData.reviews.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '30px' }}>
                 {productData.reviews.map((rev, i) => (
-                  <div key={i} style={{ borderBottom: i < productData.reviews.length - 1 ? '1px solid #eee' : 'none', paddingBottom: i < productData.reviews.length - 1 ? '20px' : '0' }}>
+                  <div key={i} style={{ borderBottom: '1px solid #f0f0f0', paddingBottom: '15px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
                       <div style={{ backgroundColor: rev.rating >= 4 ? '#5E9400' : '#e23a14', color: 'white', fontSize: '11px', fontWeight: 700, padding: '2px 5px', borderRadius: '3px', display: 'flex', alignItems: 'center', gap: '2px' }}>
                         {rev.rating} ★
@@ -265,8 +375,105 @@ export default function ProductDetail({
                   </div>
                 ))}
               </div>
+            ) : (
+              <div style={{ padding: '20px 0', color: '#666', fontSize: '14px', marginBottom: '20px', fontStyle: 'italic' }}>
+                No reviews yet for this product. Be the first to share your thoughts!
+              </div>
+            )}
+
+            {/* Review Submission Form Card */}
+            <div style={{ 
+              backgroundColor: '#fff', 
+              border: '1px solid #e5e7eb', 
+              borderRadius: '8px', 
+              padding: '24px', 
+              boxShadow: '0 1px 3px rgba(0,0,0,0.05)', 
+              marginTop: '30px' 
+            }}>
+              <h4 style={{ fontSize: '16px', fontWeight: 600, margin: '0 0 16px 0', color: DARK }}>
+                Write a Review
+              </h4>
+              
+              {!userId && (
+                <div style={{ 
+                  backgroundColor: '#fffbeb', 
+                  border: '1px solid #fef3c7', 
+                  borderRadius: '6px', 
+                  padding: '12px 16px', 
+                  marginBottom: '20px', 
+                  fontSize: '13px', 
+                  color: '#b45309',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span>⚠️</span>
+                  <span>Please sign in or create an account to submit a review for this product.</span>
+                </div>
+              )}
+              
+              <form onSubmit={handleReviewSubmit}>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, color: '#374151', marginBottom: '4px' }}>
+                    Your Rating <span style={{ color: RED }}>*</span>
+                  </label>
+                  {renderStarsSelector()}
+                </div>
+                
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, color: '#374151', marginBottom: '8px' }}>
+                    Your Comments <span style={{ color: RED }}>*</span>
+                  </label>
+                  <textarea
+                    value={reviewComment}
+                    onChange={(e) => setReviewComment(e.target.value)}
+                    disabled={!userId || submittingReview}
+                    placeholder={userId ? "Tell us what you liked or disliked about this product..." : "Please sign in to write comments..."}
+                    style={{
+                      width: '100%',
+                      height: '100px',
+                      padding: '12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      resize: 'vertical',
+                      fontFamily: 'inherit',
+                      fontSize: '14px',
+                      outline: 'none',
+                      boxSizing: 'border-box',
+                      transition: 'border-color 0.15s ease',
+                      backgroundColor: userId ? '#fff' : '#f9fafb',
+                      cursor: userId ? 'text' : 'not-allowed'
+                    }}
+                    onFocus={(e) => {
+                      if (userId) e.target.style.borderColor = GREEN;
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = '#d1d5db';
+                    }}
+                  />
+                </div>
+                
+                <button
+                  type="submit"
+                  disabled={!userId || submittingReview || starSelected === 0 || !reviewComment.trim()}
+                  style={{
+                    backgroundColor: (!userId || submittingReview || starSelected === 0 || !reviewComment.trim()) ? '#d1d5db' : GREEN,
+                    color: '#fff',
+                    border: 'none',
+                    padding: '10px 24px',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    borderRadius: '4px',
+                    cursor: (!userId || submittingReview || starSelected === 0 || !reviewComment.trim()) ? 'not-allowed' : 'pointer',
+                    transition: 'background-color 0.2s',
+                    width: 'auto'
+                  }}
+                >
+                  {submittingReview ? 'Submitting...' : 'Submit Review'}
+                </button>
+              </form>
             </div>
-          )}
+          </div>
         </div>
       </div>
 

@@ -19,6 +19,7 @@ import Wallet from './components/Wallet'
 import SmartBasket from './components/SmartBasket'
 import ContactUs from './components/ContactUs'
 import MyOrders from './components/MyOrders'
+import OrderDetails from './components/OrderDetails'
 import Addresses from './components/Addresses'
 import EmailSettings from './components/EmailSettings'
 import AdminDashboard from './components/AdminDashboard'
@@ -103,10 +104,10 @@ function App() {
     ]
   })
   const [selectedDeliveryAddressId, setSelectedDeliveryAddressId] = useState(() => {
-    return localStorage.getItem('selectedDeliveryAddressId') || 'home'
+    return localStorage.getItem('selectedDeliveryAddressId') || ''
   })
   const [selectedDeliverySlot, setSelectedDeliverySlot] = useState(() => {
-    return localStorage.getItem('selectedDeliverySlot') || 'Today, 12 - 2 PM'
+    return localStorage.getItem('selectedDeliverySlot') || ''
   })
   const selectedDeliveryAddress = useMemo(
     () => deliveryAddresses.find((address) => address.id === selectedDeliveryAddressId),
@@ -126,6 +127,14 @@ function App() {
   const [recInfoModal, setRecInfoModal] = useState(null)
   const [subCategoryFilter, setSubCategoryFilter] = useState('')
   const [isNavigating, setIsNavigating] = useState(false)
+  // Keep cartItemQuantities in sync with loaded cart
+  useEffect(() => {
+    const newQuantities = {}
+    cart.forEach((item) => {
+      newQuantities[item.product_id] = item.quantity
+    })
+    setCartItemQuantities(newQuantities)
+  }, [cart])
 
   // Trigger loading animation on route change
   useEffect(() => {
@@ -256,7 +265,7 @@ function App() {
           let reviews = [];
           let isHarDinSasta = false;
           let discount = 0;
-          let mrp = p.price;
+          let mrp;
 
           if (p.id % 5 === 0) {
             rating = (4.0 + (p.id % 10) / 10).toFixed(1);
@@ -569,15 +578,20 @@ function App() {
     if (slot) localStorage.setItem('selectedDeliverySlot', slot)
   }
 
-  const placeOrder = async () => {
+  const placeOrder = async (paymentMethod = null) => {
     setCheckoutLoading(true)
     try {
       const response = await fetch(`${API_BASE}/users/${userId}/checkout`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_method: paymentMethod })
       })
       const order = await response.json()
+      if (!response.ok) {
+        throw new Error(order.detail || 'Unable to place order')
+      }
       showToast('Order placed successfully!', 'success')
-      const purchasedItems = cart.map(ci => ({ productId: ci.productId || ci.id, quantity: ci.quantity || 1 }))
+      const purchasedItems = cart.map(ci => ({ productId: ci.product_id || ci.product?.id || ci.id, quantity: ci.quantity || 1 }))
       recordPurchases(purchasedItems)
       setCart([])
       loadCart()
@@ -585,7 +599,7 @@ function App() {
       setDeliveryModalOpen(false)
       return true
     } catch (error) {
-      showToast('Error placing order: ' + error.message, 'error')
+      showToast('Error placing order: ' + (error.message || 'Please try again'), 'error')
       return false
     } finally {
       setCheckoutLoading(false)
@@ -606,8 +620,8 @@ function App() {
     navigate('/payment')
   }
 
-  const handleCompletePayment = async () => {
-    const success = await placeOrder()
+  const handleCompletePayment = async (paymentMethod = null) => {
+    const success = await placeOrder(paymentMethod)
     if (success) {
       navigate('/orders')
     }
@@ -618,6 +632,17 @@ function App() {
     setDeliveryAddresses(updated)
     localStorage.setItem('deliveryAddresses', JSON.stringify(updated))
     setSelectedDeliveryAddressId(address.id)
+    persistDeliveryState(address.id, selectedDeliverySlot)
+  }
+
+  const removeDeliveryAddress = (addressId) => {
+    const updated = deliveryAddresses.filter((address) => address.id !== addressId)
+    setDeliveryAddresses(updated)
+    localStorage.setItem('deliveryAddresses', JSON.stringify(updated))
+    if (selectedDeliveryAddressId === addressId) {
+      setSelectedDeliveryAddressId('')
+      localStorage.removeItem('selectedDeliveryAddressId')
+    }
   }
 
   const useCurrentLocation = () => {
@@ -727,13 +752,53 @@ function App() {
     window.open(`/${categorySlug}/${productId}`, '_blank')
   }
 
-  const updateCartItemQuantity = (productId, quantity) => {
+  const updateCartItemQuantity = async (productId, quantity) => {
     if (quantity > 12) {
       showToast('You cannot add more than 12 quantities of this product', 'error')
       return
     }
     if (quantity < 0) return
+
+    // Optimistically update local state first
     setCartItemQuantities((prev) => ({ ...prev, [productId]: quantity }))
+
+    if (!userId) {
+      // If no user, we can register guest user
+      try {
+        const response = await fetch(`${API_BASE}/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: `guest_${Date.now()}`,
+            email: `guest_${Date.now()}@example.com`
+          })
+        })
+        const user = await response.json()
+        setUserId(user.id)
+        localStorage.setItem('userId', user.id)
+
+        // Then update cart on backend
+        await fetch(`${API_BASE}/users/${user.id}/cart/${productId}?quantity=${quantity}`, {
+          method: 'PUT'
+        })
+        loadCart()
+      } catch (error) {
+        console.error('Error updating cart:', error)
+      }
+      return
+    }
+
+    try {
+      // Backend expects PUT /api/users/{user_id}/cart/{product_id}?quantity={quantity}
+      const response = await fetch(`${API_BASE}/users/${userId}/cart/${productId}?quantity=${quantity}`, {
+        method: 'PUT'
+      })
+      if (response.ok) {
+        loadCart()
+      }
+    } catch (error) {
+      console.error('Error updating cart quantity:', error)
+    }
   }
 
   const addToCartWithQuantity = async (productId) => {
@@ -868,9 +933,9 @@ function App() {
   if (currentPage === 'login') {
     return (
       <LoginSignup
-        onLoginComplete={(newUserId) => {
-          setUserId(newUserId)
-          setUsername(localStorage.getItem('username'))
+        onLoginComplete={(user) => {
+          setUserId(user.id)
+          setUsername(user.username || localStorage.getItem('username'))
           setCurrentPage('home')
           showToast('Logged in successfully!', 'success')
         }}
@@ -1039,7 +1104,7 @@ function App() {
                         products={filteredRecommendations}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1065,7 +1130,7 @@ function App() {
                         products={recsFromSeason}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1091,7 +1156,7 @@ function App() {
                         products={recsFromContext}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1117,7 +1182,7 @@ function App() {
                         products={recsFromDiscounts}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1143,7 +1208,7 @@ function App() {
                         products={recsFromBrand}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1169,7 +1234,7 @@ function App() {
                         products={recsFromCategoryInterest}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1195,7 +1260,7 @@ function App() {
                         products={recsFromPopularity}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1221,7 +1286,7 @@ function App() {
                         products={recsFromHealthy}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1247,7 +1312,7 @@ function App() {
                         products={recsFromBudget}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1273,7 +1338,7 @@ function App() {
                         products={recsFromNew}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1299,7 +1364,7 @@ function App() {
                         products={recsFromPurchases}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
-                        onSaveItem={toggleSaveItem}
+                        onToggleSave={toggleSaveItem}
                         isSaved={isSaved}
                         onShowDetails={(p) => handleOpenProduct(p.id)}
                         cartItemQuantities={cartItemQuantities}
@@ -1646,6 +1711,8 @@ function App() {
               isSaved={isSaved}
               cartItemQuantities={cartItemQuantities}
               onUpdateQuantity={updateCartItemQuantity}
+              userId={userId}
+              showToast={showToast}
             />
           } />
 
@@ -1678,8 +1745,14 @@ function App() {
           <Route path="/contact" element={<ContactUs />} />
 
           <Route path="/orders" element={<MyOrders orders={orders} />} />
-          
-          <Route path="/addresses" element={<Addresses />} />
+          <Route path="/orders/:orderId" element={<OrderDetails orders={orders} userId={userId} />} />
+          <Route path="/addresses" element={<Addresses
+            addresses={deliveryAddresses}
+            selectedAddressId={selectedDeliveryAddressId}
+            onSelectAddress={(id) => { setSelectedDeliveryAddressId(id); persistDeliveryState(id, selectedDeliverySlot) }}
+            onAddAddress={addDeliveryAddress}
+            onRemoveAddress={removeDeliveryAddress}
+          />} />
 
           <Route path="/email-settings" element={<EmailSettings email={username} />} />
 
@@ -1719,3 +1792,4 @@ function App() {
 }
 
 export default App
+

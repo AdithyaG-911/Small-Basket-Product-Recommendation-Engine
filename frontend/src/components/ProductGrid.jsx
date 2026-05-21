@@ -120,13 +120,7 @@ export default function ProductGrid({
           </div>
 
           <div className="product-info-section">
-            <div className="badge-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="ten-min-badge">
-                <svg width="10px" height="10px" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M2.014 6.417H.351a.327.327 0 0 1-.308-.186.317.317 0 0 1 .03-.36L4.002.194a.466.466 0 0 1 .232-.174.386.386 0 0 1 .28.011.47.47 0 0 1 .22.186.392.392 0 0 1 .059.28L4.34 4.09h2.047c.147 0 .252.066.314.198a.33.33 0 0 1-.047.372L2.34 9.836a.424.424 0 0 1-.239.15.411.411 0 0 1-.273-.022.449.449 0 0 1-.203-.186.41.41 0 0 1-.053-.28l.442-3.081Z" fill="#5E9400"></path>
-                </svg>
-                <span>10 mins</span>
-              </div>
+            <div className="badge-row" style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '8px' }}>
               {product.isHarDinSasta && (
                 <div style={{ backgroundColor: '#f0f5ff', color: '#1a56db', fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', border: '1px solid #c3ddfd' }}>
                   Har Din Sasta

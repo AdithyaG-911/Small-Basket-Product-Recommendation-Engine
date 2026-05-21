@@ -106,14 +106,14 @@ const QUICK_LINKS = [
 ]
 
 const MORE_CATEGORIES = [
-  { label: 'Bath Salts', href: '#' },
-  { label: 'Chocolates', href: '#' },
-  { label: 'Face Care', href: '#' },
-  { label: 'Instant Coffee', href: '#' },
-  { label: 'Hand Wash', href: '#' },
-  { label: 'Fresh Chicken', href: '#' },
-  { label: 'Cookies', href: '#' },
-  { label: 'Rice', href: '#' },
+  { label: 'Bath Salts', parent: 'Beauty & Hygiene' },
+  { label: 'Chocolates', parent: 'Snacks & Branded Foods' },
+  { label: 'Face Care', parent: 'Beauty & Hygiene' },
+  { label: 'Instant Coffee', parent: 'Beverages' },
+  { label: 'Hand Wash', parent: 'Cleaning & Household' },
+  { label: 'Fresh Chicken', parent: 'Eggs, Meat & Fish' },
+  { label: 'Cookies', parent: 'Snacks & Branded Foods' },
+  { label: 'Rice', parent: 'Foodgrains, Oil & Masala' },
 ]
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -150,6 +150,40 @@ export default function SmallBasketHeader({
   const [isScrolled, setIsScrolled] = useState(false)
   const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery)
   const [suggestions, setSuggestions] = useState([])
+
+  const getDeliveryEstimate = (loc) => {
+    const map = {
+      bangalore: 11,
+      mumbai: 15,
+      delhi: 16,
+      chennai: 14,
+      hyderabad: 13,
+      kolkata: 17,
+      pune: 13,
+      ahmedabad: 16,
+      gurgaon: 15,
+      noida: 15,
+      ludhiana: 17,
+      indore: 14,
+      jaipur: 15,
+      lucknow: 16,
+      chandigarh: 15,
+      coimbatore: 13,
+      kochi: 13,
+      madurai: 14,
+      mysore: 12,
+      nagpur: 16,
+      nashik: 15,
+      surat: 15,
+      vadodara: 15,
+      vijayawada: 14,
+      visakhapatnam: 14
+    }
+    const key = String(loc || '').trim().toLowerCase()
+    const base = map[key] || 12
+    const traffic = key.includes('mumbai') || key.includes('delhi') ? 2 : key.includes('kolkata') || key.includes('ahmedabad') ? 1 : 0
+    return Math.max(11, base + traffic)
+  }
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
 
@@ -749,7 +783,7 @@ export default function SmallBasketHeader({
               >
                 <span style={{ display: 'flex', alignItems: 'center' }}>
                   <ZapSVG />
-                  <span style={{ color: 'rgb(94, 148, 0)', fontWeight: 700, fontSize: '12px', marginLeft: '4px' }}>Delivery in 11 mins</span>
+                  <span style={{ color: 'rgb(94, 148, 0)', fontWeight: 700, fontSize: '12px', marginLeft: '4px' }}>Delivery in {getDeliveryEstimate(location)} mins</span>
                 </span>
                 <span style={{ color: 'rgb(64, 64, 64)', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%' }}>
                   {location}
@@ -843,7 +877,7 @@ export default function SmallBasketHeader({
                       key={cat.label}
                       onClick={(e) => { 
                         e.stopPropagation();
-                        onSubCategorySelect && onSubCategorySelect('All', cat.label); 
+                        onSubCategorySelect && onSubCategorySelect(cat.parent || 'All', cat.label); 
                         setShowMoreMenu(false);
                       }}
                       style={{

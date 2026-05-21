@@ -62,7 +62,7 @@ export default function MyOrders({ orders = [] }) {
 
               <div style={{ marginTop: '20px', textAlign: 'right' }}>
                 <button 
-                  onClick={() => navigate('/')}
+                  onClick={() => navigate(`/orders/${order.id}`)}
                   style={{ background: 'none', border: '1px solid #ddd', padding: '8px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
                 >
                   View Order Details
