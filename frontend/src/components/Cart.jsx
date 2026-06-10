@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import saveIcon from './save_icon.svg'
+import { getProductUnitText, toSentenceCase } from '../utils/units'
 
 const GREEN = 'rgb(94, 148, 0)'
 const LIGHT_GREEN = 'rgb(241, 248, 230)'
@@ -11,6 +12,7 @@ export default function Cart({
   onRemoveFromCart, 
   onUpdateQuantity,
   onCheckout, 
+  onClearCart,
   checkoutLoading = false,
   savedItems = [],
   onSaveForLater,
@@ -47,6 +49,64 @@ export default function Cart({
   const subtotal = cartProducts.reduce((sum, item) => sum + (item.product.price * item.quantity), 0)
   const savings = cartProducts.reduce((sum, item) => sum + ((item.product.mrp || item.product.price || 0) - (item.product.price || 0)) * item.quantity, 0)
   const total = subtotal
+
+  const renderHorizontalSection = (title, items, isSaved) => {
+    if (items.length === 0) return null
+
+    return (
+      <div style={{ marginTop: '40px' }}>
+        <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '20px', color: DARK }}>{title}</h2>
+        <div style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', gap: '15px', overflowX: 'auto', overflowY: 'hidden', paddingBottom: '15px', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin', msOverflowStyle: 'auto' }}>
+            {items.map(product => (
+              <div key={product.id} style={{
+                minWidth: '180px', width: '180px', border: '1px solid #eee', borderRadius: '8px',
+                padding: '12px', display: 'flex', flexDirection: 'column', backgroundColor: '#fff',
+                boxShadow: '0 2px 5px rgba(0,0,0,0.05)', transition: 'transform 0.2s'
+              }}
+              onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-5px)'}
+              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+              >
+                <div style={{ height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px' }}>
+                  <img src={product.image_url} alt={product.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                </div>
+                <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase' }}>{product.brand || 'Generic'}</div>
+                <div style={{ fontSize: '12px', fontWeight: 400, height: '32px', overflow: 'hidden', margin: '4px 0', color: DARK }}>
+                  {product.name}
+                </div>
+                <div style={{ fontSize: '14px', fontWeight: 700, margin: '8px 0' }}>₹{product.price}</div>
+                <button 
+                  onClick={() => isSaved ? onMoveToCart(product.id) : onAddToCart(product.id)}
+                  style={{
+                    width: '100%', padding: '8px', backgroundColor: '#fff', color: RED,
+                    border: '1px solid ' + RED, borderRadius: '4px', fontWeight: 600,
+                    cursor: 'pointer', fontSize: '12px', transition: '0.2s all'
+                  }}
+                  onMouseEnter={e => { e.target.style.backgroundColor = RED; e.target.style.color = '#fff' }}
+                  onMouseLeave={e => { e.target.style.backgroundColor = '#fff'; e.target.style.color = RED }}
+                >
+                  {isSaved ? 'Move to Basket' : 'Add to Basket'}
+                </button>
+                <button 
+                  onClick={() => isSaved ? onRemoveFromSaved(product.id) : onRemoveRecommendation(product.id)}
+                  style={{
+                    marginTop: '8px', background: 'none', border: 'none', color: '#999',
+                    fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', alignSelf: 'center'
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: '10px', fontSize: '12px', color: '#666', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Swipe or scroll for more</span>
+            <span style={{ letterSpacing: '0.18em' }}>→</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (cartProducts.length === 0) {
     return (
@@ -117,9 +177,9 @@ export default function Cart({
       
       <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '30px' }}>
         {/* Left: Cart Items */}
-        <div style={{ flex: 1, overflowX: isMobile ? 'auto' : 'visible' }}>
+        <div style={{ flex: 1, overflowX: 'auto' }}>
           <div style={{ border: '1px solid #eee', borderRadius: '8px', overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: isMobile ? '600px' : 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '680px' }}>
               <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #eee' }}>
                 <tr>
                   <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#666', textTransform: 'uppercase' }}>Item Description</th>
@@ -133,13 +193,18 @@ export default function Cart({
                 {cartProducts.map(item => (
                   <tr key={item.id} style={{ borderBottom: '1px solid #eee' }}>
                     <td style={{ padding: '15px', display: 'flex', gap: '15px' }}>
-                      <img src={item.product.image_url} alt={item.product.name} style={{ width: '60px', height: '60px', objectFit: 'contain' }} />
+                      <img src={item.product.image_url} alt={toSentenceCase(item.product.name)} style={{ width: '60px', height: '60px', objectFit: 'contain' }} />
                       <div>
-                        <div style={{ fontSize: '12px', color: '#999', marginBottom: '2px' }}>{item.product.brand || 'Generic'}</div>
-                        <div style={{ fontSize: '14px', fontWeight: 600, color: DARK }}>{item.product.name}</div>
+                        <div style={{ fontSize: '12px', color: '#999', marginBottom: '2px' }}>{toSentenceCase(item.product.brand || 'Generic')}</div>
+                        <div style={{ fontSize: '14px', fontWeight: 600, color: DARK }}>{toSentenceCase(item.product.name)}</div>
                       </div>
                     </td>
-                    <td style={{ padding: '15px', textAlign: 'center', fontSize: '14px' }}>₹{item.product.price}</td>
+                    <td style={{ padding: '15px', textAlign: 'center', fontSize: '14px' }}>
+                      <div>₹{item.product.price}</div>
+                      {getProductUnitText(item.product) && (
+                        <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>per {toSentenceCase(getProductUnitText(item.product))}</div>
+                      )}
+                    </td>
                     <td style={{ padding: '15px', textAlign: 'center' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #ddd', borderRadius: '4px' }}>
                         <button 
@@ -178,7 +243,7 @@ export default function Cart({
           
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px', flexWrap: 'wrap', gap: '10px' }}>
             <button 
-              onClick={() => window.location.href = '/'}
+              onClick={onClearCart || (() => window.location.href = '/')} 
               style={{ padding: '10px 20px', border: '1px solid #ccc', background: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}
             >Empty Basket</button>
             <button 
@@ -262,58 +327,4 @@ export default function Cart({
     <div style={{ height: '64px' }} />
     </>
   )
-
-  function renderHorizontalSection(title, items, isSaved) {
-    if (items.length === 0) return null
-    
-    return (
-      <div style={{ marginTop: '40px' }}>
-        <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '20px', color: DARK }}>{title}</h2>
-        <div style={{ display: 'flex', gap: '15px', overflowX: 'auto', paddingBottom: '15px', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-          {items.map(product => (
-            <div key={product.id} style={{
-              minWidth: '180px', width: '180px', border: '1px solid #eee', borderRadius: '8px', 
-              padding: '12px', display: 'flex', flexDirection: 'column', backgroundColor: '#fff',
-              boxShadow: '0 2px 5px rgba(0,0,0,0.05)', transition: 'transform 0.2s'
-            }}
-            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-5px)'}
-            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
-            >
-              <div style={{ height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px' }}>
-                <img src={product.image_url} alt={product.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-              </div>
-              <div style={{ fontSize: '10px', color: '#999', textTransform: 'uppercase' }}>{product.brand || 'Generic'}</div>
-              <div style={{ fontSize: '12px', fontWeight: 400, height: '32px', overflow: 'hidden', margin: '4px 0', color: DARK }}>
-                {product.name}
-              </div>
-              <div style={{ fontSize: '14px', fontWeight: 700, margin: '8px 0' }}>₹{product.price}</div>
-              
-              <button 
-                onClick={() => isSaved ? onMoveToCart(product.id) : onAddToCart(product.id)}
-                style={{
-                  width: '100%', padding: '8px', backgroundColor: '#fff', color: RED, 
-                  border: '1px solid ' + RED, borderRadius: '4px', fontWeight: 600, 
-                  cursor: 'pointer', fontSize: '12px', transition: '0.2s all'
-                }}
-                onMouseEnter={e => { e.target.style.backgroundColor = RED; e.target.style.color = '#fff' }}
-                onMouseLeave={e => { e.target.style.backgroundColor = '#fff'; e.target.style.color = RED }}
-              >
-                {isSaved ? 'Move to Basket' : 'Add to Basket'}
-              </button>
-              
-              <button 
-                onClick={() => isSaved ? onRemoveFromSaved(product.id) : onRemoveRecommendation(product.id)}
-                style={{
-                  marginTop: '8px', background: 'none', border: 'none', color: '#999', 
-                  fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', alignSelf: 'center'
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
 }

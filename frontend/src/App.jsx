@@ -29,6 +29,7 @@ import PaymentPage from './components/PaymentPage'
 import Footer from './components/Footer'
 import TopLoader from './components/TopLoader'
 import { API_BASE } from './config'
+import MapModal from './components/MapModal'
 
 const BOOT_DELAY_MS = 1400
 const ITEMS_PER_PAGE = 25
@@ -47,26 +48,56 @@ const BIGBASKET_CATEGORIES = [
 ]
 
 const DISPLAY_TO_DB_CATEGORY = {
-  'Beauty & Hygiene': 'beauty  hygiene',
-  'Snacks & Branded Foods': 'snacks  branded foods',
-  'Cleaning & Household': 'cleaning  household',
-  'Beverages': 'beverages',
-  'Gourmet & World Food': 'gourmet  world food',
-  'Eggs, Meat & Fish': 'eggs meat  fish',
-  'Bakery, Cakes & Dairy': 'bakery cakes  dairy',
-  'Foodgrains, Oil & Masala': 'foodgrains oil  masala',
-  'Kitchen, Garden & Pets': 'kitchen garden  pets',
-  'Baby Care': 'baby care'
+  'Beauty & Hygiene': 'Beauty & Hygiene',
+  'Snacks & Branded Foods': 'Snacks & Branded Foods',
+  'Cleaning & Household': 'Cleaning & Household',
+  'Beverages': 'Beverages',
+  'Gourmet & World Food': 'Gourmet & World Food',
+  'Eggs, Meat & Fish': 'Eggs, Meat & Fish',
+  'Bakery, Cakes & Dairy': 'Bakery, Cakes & Dairy',
+  'Foodgrains, Oil & Masala': 'Foodgrains, Oil & Masala',
+  'Kitchen, Garden & Pets': 'Kitchen, Garden & Pets',
+  'Baby Care': 'Baby Care'
 }
+
+const EXPLICIT_PRODUCT_KEYWORDS = [
+  'adult',
+  'ashleela',
+  'porn',
+  'xxx',
+  'nude',
+  'lingerie',
+  'erotic',
+  'condom',
+  'fetish',
+  'bdsm',
+  'explicit'
+]
+
+const isExplicitProduct = (product) => {
+  if (!product) return false
+  const text = `${product.name || ''} ${product.category || ''} ${product.description || ''}`.toLowerCase()
+  return EXPLICIT_PRODUCT_KEYWORDS.some((keyword) => text.includes(keyword))
+}
+
+const filterVisibleProducts = (items = []) => (items || []).filter((product) => !isExplicitProduct(product))
 
 function App() {
   const locationPath = useLocation()
   const navigate = useNavigate()
+  const cartOpQueueRef = React.useRef(Promise.resolve())
+  const runCartOp = (op) => {
+    cartOpQueueRef.current = cartOpQueueRef.current.then(op).catch(err => console.error(err))
+    return cartOpQueueRef.current
+  }
   const [currentPage, setCurrentPage] = useState('home')
   const [userId, setUserId] = useState(localStorage.getItem('userId'))
   const [username, setUsername] = useState(localStorage.getItem('username'))
   const [userData, setUserData] = useState(null)
-  const [walletBalance, setWalletBalance] = useState(0)
+  const [walletBalance, setWalletBalance] = useState(() => {
+    const saved = localStorage.getItem('walletBalance')
+    return saved ? Number(saved) : 0
+  })
   const [products, setProducts] = useState([])
   const [totalProducts, setTotalProducts] = useState(0)
   const [skip, setSkip] = useState(0)
@@ -86,22 +117,8 @@ function App() {
     } catch (err) {
       // ignore malformed stored data
     }
-    return [
-      {
-        id: 'home',
-        label: 'Home',
-        title: 'Residential Township',
-        address: 'Residential Township, Delhi Cantonment, New Delhi, Delhi, 110010',
-        details: 'Preferred delivery location'
-      },
-      {
-        id: 'office',
-        label: 'Office',
-        title: 'Office Campus',
-        address: 'A-12, Tech Park, New Delhi, Delhi, 110045',
-        details: 'Weekday delivery only'
-      }
-    ]
+    // No hardcoded delivery addresses — users must add/select their own addresses.
+    return []
   })
   const [selectedDeliveryAddressId, setSelectedDeliveryAddressId] = useState(() => {
     return localStorage.getItem('selectedDeliveryAddressId') || ''
@@ -119,13 +136,23 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
   const [selectedProduct, setSelectedProduct] = useState(null)
-  const [savedItems, setSavedItems] = useState(JSON.parse(localStorage.getItem('savedItems')) || [])
+  const [savedItems, setSavedItems] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('savedItems') || '[]')
+      if (!Array.isArray(saved)) return []
+      return Array.from(new Map(saved.filter(Boolean).map((item) => [item.id, item])).values())
+    } catch (err) {
+      return []
+    }
+  })
   const [cartItemQuantities, setCartItemQuantities] = useState({})
   const [dismissedCheckoutRecommendationIds, setDismissedCheckoutRecommendationIds] = useState([])
   const [toasts, setToasts] = useState([])
   const [breadcrumbCategory, setBreadcrumbCategory] = useState('')
   const [recInfoModal, setRecInfoModal] = useState(null)
   const [subCategoryFilter, setSubCategoryFilter] = useState('')
+  const [showLocationMap, setShowLocationMap] = useState(false)
+  const [mapLocation, setMapLocation] = useState(null)
   const [isNavigating, setIsNavigating] = useState(false)
   // Keep cartItemQuantities in sync with loaded cart
   useEffect(() => {
@@ -136,12 +163,46 @@ function App() {
     setCartItemQuantities(newQuantities)
   }, [cart])
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('savedItems', JSON.stringify(savedItems))
+    } catch (err) {
+      console.error('Unable to persist saved items locally', err)
+    }
+  }, [savedItems])
+
+  // Do not auto-select addresses. Require the user to choose a delivery address explicitly.
+  // This avoids accidentally assigning sample/default addresses to all users.
+
   // Trigger loading animation on route change
   useEffect(() => {
     setIsNavigating(true)
     const timer = setTimeout(() => setIsNavigating(false), 800)
     return () => clearTimeout(timer)
   }, [locationPath.pathname, activeCategory, searchQuery, subCategoryFilter])
+
+  // Listen for global footer category selection fallback events
+  useEffect(() => {
+    const handler = (e) => {
+      try {
+        const cat = e?.detail?.category
+        const sub = e?.detail?.subcategory
+        if (cat && sub) {
+          handleSubCategorySelect(cat, sub)
+        } else if (cat) {
+          handleCategorySelect(cat)
+        }
+      } catch (err) {
+        // noop
+      }
+    }
+    window.addEventListener('smallbasket:categorySelect', handler)
+    window.addEventListener('smallbasket:subcategorySelect', handler)
+    return () => {
+      window.removeEventListener('smallbasket:categorySelect', handler)
+      window.removeEventListener('smallbasket:subcategorySelect', handler)
+    }
+  }, [])
 
   const showToast = (message, type = 'success') => {
     const id = Date.now() + Math.random()
@@ -190,6 +251,23 @@ function App() {
     setPurchases(JSON.parse(localStorage.getItem('purchases')) || [])
   }, [userId])
 
+  const buildFallbackSearch = (category, search, subcategory) => {
+    const fallbackKeywords = []
+    if (search) fallbackKeywords.push(search)
+    if (subcategory) fallbackKeywords.push(subcategory)
+    if (category && String(category).toLowerCase() !== 'all') fallbackKeywords.push(category)
+
+    const normalized = fallbackKeywords
+      .map((term) => String(term || '')
+        .trim()
+        .replace(/[,&/]+/g, ' ')
+        .replace(/\s+/g, ' ')
+      )
+      .filter(Boolean)
+
+    return Array.from(new Set(normalized)).join(' ')
+  }
+
   const handleLogout = () => {
     localStorage.removeItem('userId')
     localStorage.removeItem('username')
@@ -216,10 +294,52 @@ function App() {
         category: DISPLAY_TO_DB_CATEGORY[catToUse] || catToUse,
         search: searchToUse || subToUse
       })
-      const response = await fetch(`${API_BASE}/products?${params.toString()}`)
-      const data = await response.json()
+      let response = await fetch(`${API_BASE}/products?${params.toString()}`)
+      let data = await response.json()
+
+      if (Array.isArray(data.products) && data.products.length === 0) {
+        const fallbackCandidates = Array.from(new Set([subToUse, searchToUse, catToUse].filter(Boolean)))
+        for (const term of fallbackCandidates) {
+          const fallbackParams = new URLSearchParams({
+            skip: currentSkip,
+            limit: ITEMS_PER_PAGE,
+            category: 'All',
+            search: term
+          })
+          const fallbackResponse = await fetch(`${API_BASE}/products?${fallbackParams.toString()}`)
+          const fallbackResult = await fallbackResponse.json()
+          if (Array.isArray(fallbackResult.products) && fallbackResult.products.length > 0) {
+            data = fallbackResult
+            showToast(`No exact results found. Showing broader search results for "${term}".`, 'info')
+            break
+          }
+        }
+
+        if (Array.isArray(data.products) && data.products.length === 0) {
+          const fallbackSearch = buildFallbackSearch(catToUse, searchToUse, subToUse)
+          if (fallbackSearch) {
+            const fallbackParams = new URLSearchParams({
+              skip: currentSkip,
+              limit: ITEMS_PER_PAGE,
+              category: 'All',
+              search: fallbackSearch
+            })
+            const fallbackResponse = await fetch(`${API_BASE}/products?${fallbackParams.toString()}`)
+            const fallbackResult = await fallbackResponse.json()
+            if (Array.isArray(fallbackResult.products) && fallbackResult.products.length > 0) {
+              data = fallbackResult
+              showToast(`No exact results found. Showing broader search results for "${fallbackSearch}".`, 'info')
+            }
+          }
+        }
+      }
+
       // Map backend product categories to BigBasket-like canonical categories
       const mapCategory = (raw, pObj) => {
+        const fallbackSource = [raw, pObj?.subcategory, pObj?.type, pObj?.brand, pObj?.category, pObj?.name, pObj?.description]
+          .filter(Boolean).join(' ').trim()
+        const rawCategory = String(raw || fallbackSource || '').trim()
+
         // Name-based overrides for commonly miscategorized items
         if (pObj && pObj.name) {
           const nameLower = pObj.name.toLowerCase()
@@ -228,33 +348,34 @@ function App() {
           }
         }
 
-        if (!raw) return 'Others'
-        const s = String(raw).toLowerCase()
+        if (!rawCategory) return 'Others'
+        const s = rawCategory.toLowerCase()
         
         // Exact matches for database strings (with double spaces)
-        if (s === 'beauty  hygiene') return 'Beauty & Hygiene'
-        if (s === 'snacks  branded foods') return 'Snacks & Branded Foods'
-        if (s === 'cleaning  household') return 'Cleaning & Household'
+        if (s === 'beauty  hygiene' || s === 'beauty hygiene') return 'Beauty & Hygiene'
+        if (s === 'snacks  branded foods' || s === 'snacks branded foods') return 'Snacks & Branded Foods'
+        if (s === 'cleaning  household' || s === 'cleaning household') return 'Cleaning & Household'
         if (s === 'beverages') return 'Beverages'
-        if (s === 'gourmet  world food') return 'Gourmet & World Food'
-        if (s === 'eggs meat  fish') return 'Eggs, Meat & Fish'
-        if (s === 'bakery cakes  dairy') return 'Bakery, Cakes & Dairy'
-        if (s === 'foodgrains oil  masala') return 'Foodgrains, Oil & Masala'
-        if (s === 'kitchen garden  pets') return 'Kitchen, Garden & Pets'
+        if (s === 'gourmet  world food' || s === 'gourmet world food') return 'Gourmet & World Food'
+        if (s === 'eggs meat  fish' || s === 'eggs meat fish') return 'Eggs, Meat & Fish'
+        if (s === 'bakery cakes  dairy' || s === 'bakery cakes dairy') return 'Bakery, Cakes & Dairy'
+        if (s === 'foodgrains oil  masala' || s === 'foodgrains oil masala') return 'Foodgrains, Oil & Masala'
+        if (s === 'kitchen garden  pets' || s === 'kitchen garden pets') return 'Kitchen, Garden & Pets'
         if (s === 'baby care') return 'Baby Care'
 
         // Fallbacks
-        if (s.includes('fruit') || s.includes('veg')) return 'Fruits & Vegetables'
-        if (s.includes('oil') || s.includes('atta') || s.includes('masala')) return 'Foodgrains, Oil & Masala'
-        if (s.includes('milk') || s.includes('dairy')) return 'Bakery, Cakes & Dairy'
-        if (s.includes('tea') || s.includes('coffee')) return 'Beverages'
-        if (s.includes('snack') || s.includes('biscuit')) return 'Snacks & Branded Foods'
-        if (s.includes('beauty') || s.includes('hygiene') || s.includes('personal care')) return 'Beauty & Hygiene'
-        if (s.includes('clean') || s.includes('household')) return 'Cleaning & Household'
-        if (s.includes('kitchen') || s.includes('garden') || s.includes('home')) return 'Kitchen, Garden & Pets'
-        if (s.includes('egg') || s.includes('meat')) return 'Eggs, Meat & Fish'
-        if (s.includes('baby')) return 'Baby Care'
-        if (s.includes('electronics') || s.includes('appliance')) return 'Kitchen, Garden & Pets'
+        if (s.includes('fruit') || s.includes('veg') || s.includes('vegetable')) return 'Fruits & Vegetables'
+        if (s.includes('basmati') || s.includes('rice')) return 'Foodgrains, Oil & Masala'
+        if (s.includes('oil') || s.includes('atta') || s.includes('masala') || s.includes('rice') || s.includes('ghee')) return 'Foodgrains, Oil & Masala'
+        if (s.includes('milk') || s.includes('dairy') || s.includes('bread') || s.includes('cake') || s.includes('cheese')) return 'Bakery, Cakes & Dairy'
+        if (s.includes('tea') || s.includes('coffee') || s.includes('juice') || s.includes('drink')) return 'Beverages'
+        if (s.includes('snack') || s.includes('biscuit') || s.includes('cookie') || s.includes('chocolate')) return 'Snacks & Branded Foods'
+        if (s.includes('beauty') || s.includes('hygiene') || s.includes('personal care') || s.includes('shampoo') || s.includes('skincare') || s.includes('cosmetic')) return 'Beauty & Hygiene'
+        if (s.includes('clean') || s.includes('household') || s.includes('detergent') || s.includes('cleaner')) return 'Cleaning & Household'
+        if (s.includes('kitchen') || s.includes('garden') || s.includes('home') || s.includes('cookware') || s.includes('pet')) return 'Kitchen, Garden & Pets'
+        if (s.includes('egg') || s.includes('meat') || s.includes('fish') || s.includes('chicken') || s.includes('mutton')) return 'Eggs, Meat & Fish'
+        if (s.includes('baby') || s.includes('diaper') || s.includes('baby')) return 'Baby Care'
+        if (s.includes('electronics') || s.includes('appliance') || s.includes('device')) return 'Kitchen, Garden & Pets'
         return 'Others'
       }
 
@@ -328,6 +449,11 @@ function App() {
       const response = await fetch(`${API_BASE}/users/${userId}/cart`)
       const data = await response.json()
       setCart(data)
+      try {
+        localStorage.setItem(`cart_user_${userId}`, JSON.stringify(data || []))
+      } catch (err) {
+        console.error('Unable to persist cart to localStorage', err)
+      }
     } catch (error) {
       console.error('Error loading cart:', error)
     }
@@ -416,7 +542,7 @@ function App() {
     try {
       const response = await fetch(`${API_BASE}/users/${userId}/orders`)
       const data = await response.json()
-      setOrders(data)
+      setOrders(enrichOrdersWithDeliveryMeta(Array.isArray(data) ? data : []))
     } catch (error) {
       console.error('Error loading orders:', error)
     }
@@ -445,6 +571,7 @@ function App() {
       const data = await response.json()
       setUserData(data)
       setUsername(data.username)
+      localStorage.setItem('username', data.username)
       showToast('Profile updated successfully', 'success')
       return true
     } catch (error) {
@@ -458,6 +585,42 @@ function App() {
     setWalletBalance(prev => prev + amount)
     showToast(`₹${amount} added to your wallet!`, 'success')
   }
+
+  useEffect(() => {
+    localStorage.setItem('walletBalance', walletBalance.toFixed(2))
+  }, [walletBalance])
+
+  // Cross-tab cart synchronization: listen for storage events and update cart
+  useEffect(() => {
+    const storageKey = () => (userId ? `cart_user_${userId}` : 'cart_guest')
+
+    const onStorage = (e) => {
+      try {
+        if (!e.key) return
+        const expected = storageKey()
+        if (e.key !== expected) return
+        const newVal = e.newValue ? JSON.parse(e.newValue) : []
+        setCart(Array.isArray(newVal) ? newVal : [])
+      } catch (err) {
+        console.error('Error parsing cart from storage event', err)
+      }
+    }
+
+    window.addEventListener('storage', onStorage)
+
+    // Seed cart from localStorage on mount if available
+    try {
+      const stored = localStorage.getItem(storageKey())
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed)) setCart(parsed)
+      }
+    } catch (err) {
+      // ignore
+    }
+
+    return () => window.removeEventListener('storage', onStorage)
+  }, [userId])
 
   const trackProduct = async (productId) => {
     if (!userId) return
@@ -479,90 +642,146 @@ function App() {
   }
 
   const addToCart = async (productId) => {
-    if (!userId) {
-      try {
-        const response = await fetch(`${API_BASE}/users`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: `guest_${Date.now()}`,
-            email: `guest_${Date.now()}@example.com`
-          })
-        })
-        const user = await response.json()
-        setUserId(user.id)
-        localStorage.setItem('userId', user.id)
+    // Optimistic update
+    setCartItemQuantities((prev) => ({ ...prev, [productId]: 1 }))
+    setCart((prevCart) => {
+      if (prevCart.some(item => item.product_id === productId)) {
+        return prevCart.map(item => item.product_id === productId ? { ...item, quantity: item.quantity + 1 } : item)
+      }
+      const productObj = products.find(p => p.id === productId) || recommendations.find(p => p.id === productId) || browsingHistory.find(p => p.id === productId)
+      return [...prevCart, {
+        product_id: productId,
+        quantity: 1,
+        product: productObj || { id: productId, name: 'Product', price: 0 }
+      }]
+    })
 
-        await fetch(`${API_BASE}/users/${user.id}/cart/${productId}`, {
+    return runCartOp(async () => {
+      if (!userId) {
+        try {
+          const response = await fetch(`${API_BASE}/users`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: `guest_${Date.now()}`,
+              email: `guest_${Date.now()}@example.com`
+            })
+          })
+          const user = await response.json()
+          setUserId(user.id)
+          setUsername(user.username || user.email)
+          localStorage.setItem('userId', user.id)
+          localStorage.setItem('username', user.username || user.email || `guest_${user.id}`)
+
+          await fetch(`${API_BASE}/users/${user.id}/cart/${productId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ quantity: 1 })
+          })
+          await loadCart()
+          showToast('An item has been added to your basket successfully', 'success')
+        } catch (error) {
+          console.error('Error adding to cart:', error)
+        }
+        return
+      }
+
+      try {
+        await fetch(`${API_BASE}/users/${userId}/cart/${productId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ quantity: 1 })
         })
-
+        await loadCart()
         showToast('An item has been added to your basket successfully', 'success')
       } catch (error) {
         console.error('Error adding to cart:', error)
       }
-      return
-    }
-
-    try {
-      await fetch(`${API_BASE}/users/${userId}/cart/${productId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: 1 })
-      })
-      loadCart()
-      showToast('An item has been added to your basket successfully', 'success')
-    } catch (error) {
-      console.error('Error adding to cart:', error)
-    }
+    })
   }
 
   const updateCartQuantity = async (productId, newQuantity) => {
-    if (!userId) return
-    try {
-      await fetch(`${API_BASE}/users/${userId}/cart/${productId}?quantity=${newQuantity}`, {
-        method: 'PUT'
-      })
-      loadCart()
-    } catch (error) {
-      console.error('Error updating cart quantity:', error)
-    }
+    return updateCartItemQuantity(productId, newQuantity)
   }
 
   const removeFromCart = async (productId) => {
-    if (!userId) return
-    try {
-      await fetch(`${API_BASE}/users/${userId}/cart/${productId}`, {
-        method: 'DELETE'
-      })
-      loadCart()
-    } catch (error) {
-      console.error('Error removing from cart:', error)
-    }
+    // Optimistic update
+    setCartItemQuantities((prev) => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
+    })
+    setCart((prevCart) => prevCart.filter(item => item.product_id !== productId))
+
+    return runCartOp(async () => {
+      if (!userId) return
+      try {
+        await fetch(`${API_BASE}/users/${userId}/cart/${productId}`, {
+          method: 'DELETE'
+        })
+        await loadCart()
+      } catch (error) {
+        console.error('Error removing from cart:', error)
+      }
+    })
+  }
+
+  const clearCart = async () => {
+    setCartItemQuantities({})
+    setCart([])
+
+    return runCartOp(async () => {
+      if (!userId || cart.length === 0) return
+      try {
+        await Promise.all(cart.map((item) => fetch(`${API_BASE}/users/${userId}/cart/${item.product_id}`, { method: 'DELETE' })))
+        await loadCart()
+        showToast('Basket cleared', 'success')
+      } catch (error) {
+        console.error('Error clearing cart:', error)
+        showToast('Unable to clear basket. Please try again.', 'error')
+      }
+    })
   }
 
   const saveForLater = async (productId) => {
     const itemToSave = cart.find(item => item.product_id === productId)
-    if (itemToSave) {
-      const newSavedItems = [...savedItems, itemToSave.product]
-      setSavedItems(newSavedItems)
-      localStorage.setItem('savedItems', JSON.stringify(newSavedItems))
-      await removeFromCart(productId)
+    if (!itemToSave || !itemToSave.product) return
+    setSavedItems((prev) => {
+      if (prev.some(item => item.id === itemToSave.product.id)) {
+        showToast('This item is already in your saved list.', 'info')
+        return prev
+      }
+      const next = [...prev, itemToSave.product]
+      try {
+        localStorage.setItem('savedItems', JSON.stringify(next))
+      } catch (err) {
+        console.error('Unable to persist saved items locally', err)
+      }
       showToast('Item saved for later', 'success')
-    }
+      return next
+    })
+    await removeFromCart(productId)
   }
 
   const moveToCart = async (productId) => {
     const itemToMove = savedItems.find(item => item.id === productId)
-    if (itemToMove) {
-      const newSavedItems = savedItems.filter(item => item.id !== productId)
-      setSavedItems(newSavedItems)
+    if (!itemToMove) return
+    const newSavedItems = savedItems.filter(item => item.id !== productId)
+    setSavedItems(newSavedItems)
+    try {
       localStorage.setItem('savedItems', JSON.stringify(newSavedItems))
-      await addToCart(productId)
-      showToast('Item moved to basket', 'success')
+    } catch (err) {
+      console.error('Unable to persist saved items locally', err)
     }
+
+    const existingCartItem = cart.find(item => item.product_id === productId)
+    if (existingCartItem) {
+      await updateCartQuantity(productId, existingCartItem.quantity + 1)
+    } else {
+      await addToCart(productId)
+    }
+
+    showToast('Item moved to basket', 'success')
   }
 
   const checkout = async () => {
@@ -578,18 +797,60 @@ function App() {
     if (slot) localStorage.setItem('selectedDeliverySlot', slot)
   }
 
+  const getOrderDeliveryMetaKey = () => `orderDeliveryMeta_${userId || 'guest'}`
+
+  const readOrderDeliveryMeta = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(getOrderDeliveryMetaKey()) || '{}')
+      return saved && typeof saved === 'object' ? saved : {}
+    } catch (err) {
+      return {}
+    }
+  }
+
+  const writeOrderDeliveryMeta = (orderId, deliveryMeta) => {
+    if (!orderId) return
+    const current = readOrderDeliveryMeta()
+    const updated = { ...current, [orderId]: deliveryMeta }
+    localStorage.setItem(getOrderDeliveryMetaKey(), JSON.stringify(updated))
+  }
+
+  const enrichOrdersWithDeliveryMeta = (ordersList = []) => {
+    const deliveryMeta = readOrderDeliveryMeta()
+    return ordersList.map((order) => ({
+      ...order,
+      ...(deliveryMeta[order.id] || {})
+    }))
+  }
+
   const placeOrder = async (paymentMethod = null) => {
     setCheckoutLoading(true)
     try {
+      const selectedAddress = selectedDeliveryAddress || {}
+      const deliveryMeta = {
+        address: selectedAddress.address || '',
+        address_details: selectedAddress.details || selectedAddress.locationDetails || '',
+        delivery_slot: selectedDeliverySlot || '',
+        coordinates: selectedAddress.coords || (
+          Number.isFinite(Number(selectedAddress.lat)) && Number.isFinite(Number(selectedAddress.lon))
+            ? { lat: Number(selectedAddress.lat), lon: Number(selectedAddress.lon) }
+            : null
+        )
+      }
       const response = await fetch(`${API_BASE}/users/${userId}/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_method: paymentMethod })
+        body: JSON.stringify({
+          payment_method: paymentMethod,
+          shipping_address: deliveryMeta.address
+        })
       })
       const order = await response.json()
       if (!response.ok) {
         throw new Error(order.detail || 'Unable to place order')
       }
+      writeOrderDeliveryMeta(order.id, deliveryMeta)
+      setOrders((currentOrders) => enrichOrdersWithDeliveryMeta([{ ...order, ...deliveryMeta }, ...currentOrders.filter((item) => item.id !== order.id)]))
       showToast('Order placed successfully!', 'success')
       const purchasedItems = cart.map(ci => ({ productId: ci.product_id || ci.product?.id || ci.id, quantity: ci.quantity || 1 }))
       recordPurchases(purchasedItems)
@@ -620,17 +881,33 @@ function App() {
     navigate('/payment')
   }
 
-  const handleCompletePayment = async (paymentMethod = null) => {
+  const handleCompletePayment = async (paymentMethod = null, paymentAmount = null) => {
+    if (paymentMethod === 'Wallet Balance' && paymentAmount != null) {
+      if (walletBalance < paymentAmount) {
+        showToast('Insufficient wallet balance for this payment.', 'error')
+        return false
+      }
+    }
+
     const success = await placeOrder(paymentMethod)
     if (success) {
+      if (paymentMethod === 'Wallet Balance' && paymentAmount != null) {
+        setWalletBalance((prev) => Math.max(0, prev - paymentAmount))
+      }
       navigate('/orders')
     }
+    return success
   }
 
-  const addDeliveryAddress = (address) => {
-    const updated = [address, ...deliveryAddresses]
-    setDeliveryAddresses(updated)
-    localStorage.setItem('deliveryAddresses', JSON.stringify(updated))
+  const saveDeliveryAddress = (address) => {
+    setDeliveryAddresses((currentAddresses) => {
+      const updated = currentAddresses.some((item) => item.id === address.id)
+        ? currentAddresses.map((item) => item.id === address.id ? address : item)
+        : [address, ...currentAddresses]
+
+      localStorage.setItem('deliveryAddresses', JSON.stringify(updated))
+      return updated
+    })
     setSelectedDeliveryAddressId(address.id)
     persistDeliveryState(address.id, selectedDeliverySlot)
   }
@@ -650,21 +927,150 @@ function App() {
       showToast('Geolocation is not available in your browser.', 'error')
       return
     }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
+    // First try the browser geolocation API with permission handling
+    const tryNavigatorGeo = async () => {
+      try {
+        // Optional: Check permission state to give a clearer message
+        if (navigator.permissions && navigator.permissions.query) {
+          try {
+            const status = await navigator.permissions.query({ name: 'geolocation' })
+            if (status.state === 'denied') {
+              showToast('Location permission denied. Please enable location access in your browser settings or add an address manually.', 'error')
+              return null
+            }
+          } catch (permErr) {
+            // ignore permission query errors and proceed to request
+          }
+        }
+
+        return await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            (position) => resolve(position),
+            (err) => reject(err),
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+          )
+        })
+      } catch (err) {
+        return Promise.reject(err)
+      }
+    }
+
+    tryNavigatorGeo()
+      .then((position) => {
+        if (!position) return
+        const lat = Number(position.coords.latitude)
+        const lon = Number(position.coords.longitude)
+        const accuracy = Number(position.coords.accuracy)
         const address = {
           id: `gps-${Date.now()}`,
           label: 'Current location',
           title: 'Live location',
-          address: `${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`,
-          details: 'Location captured from device GPS'
+          address: `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`,
+          details: 'Location captured from device GPS',
+          lat,
+          lon,
+          accuracy: Number.isFinite(accuracy) ? accuracy : null
         }
-        addDeliveryAddress(address)
-      },
-      () => {
-        showToast('Unable to access your location. Please choose an address manually.', 'error')
-      }
-    )
+        // Show map modal to confirm exact location before persisting
+        // expose accuracy hint for map zoom heuristics
+        window.__smallBasketMapAccuracy = address.accuracy || null
+        setMapLocation(address)
+        setShowLocationMap(true)
+      })
+      .catch(async (error) => {
+        console.error('Geolocation error:', error)
+        // If browser geolocation fails (permission denied, unavailable, or timeout), try IP-based fallback
+        try {
+          const resp = await fetch('https://ipapi.co/json/')
+          if (resp.ok) {
+            const json = await resp.json()
+            const city = json.city || ''
+            const region = json.region || ''
+            const country = json.country_name || ''
+            const addrLine = [city, region, country].filter(Boolean).join(', ')
+            if (addrLine) {
+              const lat = json.latitude ? Number(json.latitude) : null
+              const lon = json.longitude ? Number(json.longitude) : null
+              const address = {
+                id: `ip-${Date.now()}`,
+                label: 'Estimated location',
+                title: 'Estimated location',
+                address: addrLine,
+                details: 'Location estimated from your IP address (approximate)'
+              }
+              if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                address.lat = lat
+                address.lon = lon
+              }
+              // Show map modal to allow user confirm/adjust
+                // IP-based fallbacks are coarse — hint the map to show a wider area
+                window.__smallBasketMapAccuracy = 2000
+                setMapLocation(address)
+                setShowLocationMap(true)
+              return
+            }
+          }
+        } catch (ipErr) {
+          // ignore IP lookup errors
+          console.error('IP geolocation fallback failed:', ipErr)
+        }
+
+        const message = error?.code === 1
+          ? 'Location permission denied. Please enable location access or add an address manually.'
+          : error?.code === 2
+            ? 'Location unavailable. Please try again or add an address manually.'
+            : 'Unable to access your location. Please choose an address manually.'
+        showToast(message, 'error')
+      })
+  }
+
+  const handleConfirmMapLocation = (selectedLocation) => {
+    const confirmedLocation = selectedLocation || mapLocation
+
+    if (!confirmedLocation) {
+      setShowLocationMap(false)
+      return
+    }
+
+    const lat = Number(confirmedLocation.lat)
+    const lon = Number(confirmedLocation.lon)
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lon)
+    const addressText = confirmedLocation.address
+      || confirmedLocation.details
+      || (hasCoords ? `Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}` : '')
+    const detailText = confirmedLocation.locationDetails
+      || confirmedLocation.details
+      || (hasCoords ? `Coordinates: ${lat.toFixed(6)}, ${lon.toFixed(6)}` : 'Pinned from map')
+
+    // Persist the chosen location into delivery addresses
+    const address = {
+      id: confirmedLocation.id || `loc-${Date.now()}`,
+      label: confirmedLocation.label || 'Selected location',
+      title: confirmedLocation.title || confirmedLocation.label || 'Selected location',
+      address: addressText,
+      details: detailText,
+      locationDetails: confirmedLocation.locationDetails || '',
+      geocode: confirmedLocation.geocode || null,
+      accuracy: confirmedLocation.accuracy || null
+    }
+
+    if (hasCoords) {
+      address.lat = lat
+      address.lon = lon
+      address.coords = { lat, lon }
+    }
+
+    saveDeliveryAddress(address)
+    localStorage.setItem('userLocation', address.address)
+    setMapLocation(address)
+    setShowLocationMap(false)
+    showToast('Location saved. Select a slot to continue.', 'success')
+  }
+
+  const handleCancelMapLocation = () => {
+    setShowLocationMap(false)
+    setMapLocation(null)
+    showToast('Location selection cancelled.', 'info')
   }
 
   const handleSearchSubmit = (query, categoryOverride) => {
@@ -708,12 +1114,28 @@ function App() {
 
   // Called from header quick-links / mega-menu: sets category + sub-label without touching search bar
   const handleSubCategorySelect = (parentCategory, subLabel) => {
-    setActiveCategory(parentCategory || 'All')
-    setBreadcrumbCategory(subLabel || parentCategory || '')
-    setSubCategoryFilter(subLabel || '')
+    // Support both call signatures (parent, sub) and (sub, parent) in case callers pass args swapped.
+    let parent = parentCategory
+    let sub = subLabel
+
+    if (parent && sub) {
+      // If the second argument looks like a top-level category, swap.
+      if (BIGBASKET_CATEGORIES.includes(String(sub)) && !BIGBASKET_CATEGORIES.includes(String(parent))) {
+        const tmp = parent
+        parent = sub
+        sub = tmp
+      }
+    }
+
+    parent = parent || 'All'
+    sub = sub || ''
+
+    setActiveCategory(parent)
+    setBreadcrumbCategory(sub || parent || '')
+    setSubCategoryFilter(sub)
     setSearchQuery('')          // keep search bar empty
     setSkip(0)
-    loadProducts(0, false, parentCategory || 'All', '', subLabel || '')
+    loadProducts(0, false, parent, '', sub)
     navigate('/')
     window.scrollTo(0, 0)
   }
@@ -757,48 +1179,56 @@ function App() {
       showToast('You cannot add more than 12 quantities of this product', 'error')
       return
     }
-    if (quantity < 0) return
-
-    // Optimistically update local state first
-    setCartItemQuantities((prev) => ({ ...prev, [productId]: quantity }))
-
-    if (!userId) {
-      // If no user, we can register guest user
-      try {
-        const response = await fetch(`${API_BASE}/users`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: `guest_${Date.now()}`,
-            email: `guest_${Date.now()}@example.com`
-          })
-        })
-        const user = await response.json()
-        setUserId(user.id)
-        localStorage.setItem('userId', user.id)
-
-        // Then update cart on backend
-        await fetch(`${API_BASE}/users/${user.id}/cart/${productId}?quantity=${quantity}`, {
-          method: 'PUT'
-        })
-        loadCart()
-      } catch (error) {
-        console.error('Error updating cart:', error)
-      }
+    if (quantity <= 0) {
+      await removeFromCart(productId)
       return
     }
 
-    try {
-      // Backend expects PUT /api/users/{user_id}/cart/{product_id}?quantity={quantity}
-      const response = await fetch(`${API_BASE}/users/${userId}/cart/${productId}?quantity=${quantity}`, {
-        method: 'PUT'
-      })
-      if (response.ok) {
-        loadCart()
+    // Optimistic update
+    setCartItemQuantities((prev) => ({ ...prev, [productId]: quantity }))
+    setCart((prevCart) => prevCart.map(item => item.product_id === productId ? { ...item, quantity } : item))
+
+    return runCartOp(async () => {
+      if (!userId) {
+        // If no user, we can register guest user
+        try {
+          const response = await fetch(`${API_BASE}/users`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: `guest_${Date.now()}`,
+              email: `guest_${Date.now()}@example.com`
+            })
+          })
+          const user = await response.json()
+          setUserId(user.id)
+          setUsername(user.username || user.email)
+          localStorage.setItem('userId', user.id)
+          localStorage.setItem('username', user.username || user.email || `guest_${user.id}`)
+
+          // Then update cart on backend
+          await fetch(`${API_BASE}/users/${user.id}/cart/${productId}?quantity=${quantity}`, {
+            method: 'PUT'
+          })
+          await loadCart()
+        } catch (error) {
+          console.error('Error updating cart:', error)
+        }
+        return
       }
-    } catch (error) {
-      console.error('Error updating cart quantity:', error)
-    }
+
+      try {
+        // Backend expects PUT /api/users/{user_id}/cart/{product_id}?quantity={quantity}
+        const response = await fetch(`${API_BASE}/users/${userId}/cart/${productId}?quantity=${quantity}`, {
+          method: 'PUT'
+        })
+        if (response.ok) {
+          await loadCart()
+        }
+      } catch (error) {
+        console.error('Error updating cart quantity:', error)
+      }
+    })
   }
 
   const addToCartWithQuantity = async (productId) => {
@@ -816,7 +1246,9 @@ function App() {
         })
         const user = await response.json()
         setUserId(user.id)
+        setUsername(user.username || user.email)
         localStorage.setItem('userId', user.id)
+        localStorage.setItem('username', user.username || user.email || `guest_${user.id}`)
 
         await fetch(`${API_BASE}/users/${user.id}/cart/${productId}`, {
           method: 'POST',
@@ -853,16 +1285,18 @@ function App() {
     loadProducts(nextSkip, true)
   }
 
-  const filteredRecommendations = recommendations.map(p => ({...p, explanation: p.recommendation_reason || 'AI-curated pick based on your unique profile'}))
-  const checkoutRecommendations = recommendations.filter((product) => !dismissedCheckoutRecommendationIds.includes(product.id))
+  const visibleProducts = filterVisibleProducts(products)
+  const visibleRecommendations = filterVisibleProducts(recommendations)
+  const filteredRecommendations = visibleRecommendations.map(p => ({...p, explanation: p.recommendation_reason || 'AI-curated pick based on your unique profile'}))
+  const checkoutRecommendations = visibleRecommendations.filter((product) => !dismissedCheckoutRecommendationIds.includes(product.id))
 
   // Use backend recommendation groups
-  const recsFromPurchases = recommendationGroups.personalized?.slice(0, 6) || []
-  const recsFromSearch = recommendationGroups.personalized?.slice(0, 6) || []
-  const recsFromBrowsing = recommendationGroups.personalized?.slice(0, 6) || []
+  const recsFromPurchases = filterVisibleProducts(recommendationGroups.personalized?.slice(0, 6) || [])
+  const recsFromSearch = filterVisibleProducts(recommendationGroups.personalized?.slice(0, 6) || [])
+  const recsFromBrowsing = filterVisibleProducts(recommendationGroups.personalized?.slice(0, 6) || [])
   
   // Time-based recommendations
-  const recsFromSeason = recommendationGroups.time_based?.slice(0, 6) || []
+  const recsFromSeason = filterVisibleProducts(recommendationGroups.time_based?.slice(0, 6) || [])
   
   // Context-aware (already from backend)
   let contextTitle = ''
@@ -883,31 +1317,53 @@ function App() {
     contextReason = 'Relaxing beauty and hygiene picks for your night routine'
   }
   
-  const recsFromContext = recommendationGroups.time_based?.map(p => ({
+  const recsFromContext = filterVisibleProducts(recommendationGroups.time_based?.map(p => ({
     ...p, 
     explanation: p.recommendation_reason || contextReason
-  })).slice(0, 6) || []
+  })) || []).slice(0, 6)
 
   // Brand Loyalty Recommendation
-  const recsFromBrand = recommendationGroups.brand_based?.slice(0, 6) || []
+  const recsFromBrand = filterVisibleProducts(recommendationGroups.brand_based?.slice(0, 6) || [])
 
   // Hot Discounts Recommendation
-  const recsFromDiscounts = recommendationGroups.discount?.slice(0, 6) || []
+  // Compute discount for a product (prefer explicit field, fallback to mrp/price or synthetic heuristic)
+  const computeDiscountPercent = (p) => {
+    try {
+      if (p.discount && Number(p.discount) > 0) return Number(p.discount)
+      if (p.mrp && p.price && p.mrp > p.price) return Math.round(((p.mrp - p.price) / p.mrp) * 100)
+      // Fallback synthetic heuristic similar to product load: based on id
+      if (p.id % 5 === 0) return 15 + (p.id % 10)
+      if (p.id % 3 === 0) return 5 + (p.id % 5)
+    } catch (err) {
+      return 0
+    }
+    return 0
+  }
+
+  const recsFromDiscounts = (recommendationGroups.discount || [])
+    .map(p => ({ ...p, discount: computeDiscountPercent(p) }))
+    .filter(p => (p.discount || 0) > 0)
+    .sort((a, b) => (b.discount || 0) - (a.discount || 0))
+    .slice(0, 6)
+    .map(p => ({ ...p, explanation: p.recommendation_reason || 'High-value discount pick' }))
+  const recsFromDiscounts_filtered = filterVisibleProducts(recsFromDiscounts)
+  // Use the filtered list for display
+  const recsFromDiscountsDisplay = recsFromDiscounts_filtered
 
   // Category History
-  const recsFromCategoryInterest = recommendationGroups.category_history?.slice(0, 6) || []
+  const recsFromCategoryInterest = filterVisibleProducts(recommendationGroups.category_history?.slice(0, 6) || [])
 
   // Trending Now
-  const recsFromPopularity = recommendationGroups.trending?.slice(0, 6) || []
+  const recsFromPopularity = filterVisibleProducts(recommendationGroups.trending?.slice(0, 6) || [])
 
   // Weather/Seasonal
-  const recsFromWeatherSeason = recommendationGroups.weather_seasonal?.slice(0, 6) || []
+  const recsFromWeatherSeason = filterVisibleProducts(recommendationGroups.weather_seasonal?.slice(0, 6) || [])
   
   // Festival/Occasion
-  const recsFromFestival = recommendationGroups.festival?.slice(0, 6) || []
+  const recsFromFestival = filterVisibleProducts(recommendationGroups.festival?.slice(0, 6) || [])
 
   // Budget Corner (Under ₹150) - Fallback if backend doesn't provide
-  const recsFromBudget = products
+  const recsFromBudget = visibleProducts
     .filter(p => p.price <= 150)
     .sort((a, b) => a.price - b.price)
     .slice(0, 12)
@@ -915,7 +1371,7 @@ function App() {
 
   // 8. Health & Wellness
   const healthKeywords = ['organic', 'fresh', 'fruit', 'vegetable', 'salad', 'green', 'natural', 'honey', 'oats', 'muesli', 'diet', 'low fat', 'protein', 'tea', 'juice']
-  const recsFromHealthy = products
+  const recsFromHealthy = visibleProducts
     .filter(p => healthKeywords.some(k => 
       p.name?.toLowerCase().includes(k) || 
       p.description?.toLowerCase().includes(k) || 
@@ -925,7 +1381,7 @@ function App() {
     .map(p => ({...p, explanation: `Curated for your health and wellness goals.`}))
 
   // 9. Just Arrived
-  const recsFromNew = [...products]
+  const recsFromNew = [...visibleProducts]
     .sort((a, b) => b.id - a.id)
     .slice(0, 12)
     .map(p => ({...p, explanation: `Freshly added to our catalog. Be the first to try!`}))
@@ -935,7 +1391,9 @@ function App() {
       <LoginSignup
         onLoginComplete={(user) => {
           setUserId(user.id)
-          setUsername(user.username || localStorage.getItem('username'))
+          setUsername(user.username || user.email)
+          localStorage.setItem('userId', user.id)
+          localStorage.setItem('username', user.username || user.email)
           setCurrentPage('home')
           showToast('Logged in successfully!', 'success')
         }}
@@ -955,7 +1413,9 @@ function App() {
               modal
               onLoginComplete={(user) => {
                 setUserId(user.id)
-                setUsername(user.username || user.identifier)
+                setUsername(user.username || user.email || user.identifier)
+                localStorage.setItem('userId', user.id)
+                localStorage.setItem('username', user.username || user.email || user.identifier)
                 setShowLoginModal(false)
                 showToast('Logged in successfully!', 'success')
               }}
@@ -997,6 +1457,18 @@ function App() {
         />
       )}
 
+      {showLocationMap && mapLocation && (
+        <MapModal
+          lat={mapLocation.lat}
+          lon={mapLocation.lon}
+          accuracy={mapLocation.accuracy}
+          label={mapLocation.label}
+          details={mapLocation.address || mapLocation.details}
+          onClose={handleCancelMapLocation}
+          onConfirm={handleConfirmMapLocation}
+        />
+      )}
+
       <Routes>
         <Route path="/checkout" element={
           <CheckoutPage
@@ -1006,9 +1478,11 @@ function App() {
             onSelectAddress={(id) => { setSelectedDeliveryAddressId(id); persistDeliveryState(id, selectedDeliverySlot) }}
             onSelectSlot={(slot) => { setSelectedDeliverySlot(slot); persistDeliveryState(selectedDeliveryAddressId, slot) }}
             onUseCurrentLocation={useCurrentLocation}
-            onAddAddress={addDeliveryAddress}
+            onAddAddress={saveDeliveryAddress}
+            onRemoveAddress={removeDeliveryAddress}
             onCancel={() => navigate('/cart')}
             onConfirm={handleConfirmDelivery}
+            onHomeClick={() => { resetFilters(); navigate('/') }}
             checkoutLoading={checkoutLoading}
             cart={cart}
           />
@@ -1018,7 +1492,9 @@ function App() {
             address={selectedDeliveryAddress}
             slot={selectedDeliverySlot}
             cart={cart}
+            walletBalance={walletBalance}
             onBack={() => navigate('/checkout')}
+            onHomeClick={() => { resetFilters(); navigate('/') }}
             onCompletePayment={handleCompletePayment}
             checkoutLoading={checkoutLoading}
           />
@@ -1028,6 +1504,9 @@ function App() {
 
       <main className="app-container">
         <Routes>
+          <Route path="/checkout" element={null} />
+          <Route path="/payment" element={null} />
+
           <Route path="/" element={
             <div className="home">
               {/* Hero Section & Highlights - Only show on Home page with no filters */}
@@ -1165,7 +1644,7 @@ function App() {
                     </section>
                   )}
 
-                  {recsFromDiscounts.length > 0 && (
+                  {recsFromDiscountsDisplay.length > 0 && (
                     <section className="section recommendation-shell">
                       <div className="section-heading">
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
@@ -1179,7 +1658,7 @@ function App() {
                         </div>
                       </div>
                       <Recommendations
-                        products={recsFromDiscounts}
+                        products={recsFromDiscountsDisplay}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
                         onToggleSave={toggleSaveItem}
@@ -1503,7 +1982,7 @@ function App() {
                     </section>
                   )}
 
-                  {recsFromDiscounts.length > 0 && (
+                  {recsFromDiscountsDisplay.length > 0 && (
                     <section className="section recommendation-shell">
                       <div className="section-heading">
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
@@ -1517,7 +1996,7 @@ function App() {
                         </div>
                       </div>
                       <Recommendations
-                        products={recsFromDiscounts}
+                        products={recsFromDiscountsDisplay}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
                         onToggleSave={toggleSaveItem}
@@ -1611,8 +2090,8 @@ function App() {
 
               {(searchQuery.trim() || subCategoryFilter.trim() || activeCategory !== 'All') ? (
                 <SearchResults
-                  products={products}
-                  totalProducts={totalProducts}
+                  products={visibleProducts}
+                  totalProducts={visibleProducts.length}
                   searchQuery={searchQuery}
                   subCategoryFilter={subCategoryFilter}
                   onAddToCart={addToCartWithQuantity}
@@ -1645,7 +2124,7 @@ function App() {
                   {products.length > 0 ? (
                     <>
                       <ProductGrid
-                        products={products}
+                        products={visibleProducts}
                         onAddToCart={addToCartWithQuantity}
                         onProductClick={handleOpenProduct}
                         onToggleSave={toggleSaveItem}
@@ -1685,6 +2164,7 @@ function App() {
               cart={cart} 
               products={products} 
               onRemoveFromCart={removeFromCart} 
+              onClearCart={clearCart}
               onUpdateQuantity={updateCartQuantity}
               onCheckout={checkout} 
               checkoutLoading={checkoutLoading}
@@ -1721,6 +2201,10 @@ function App() {
               user={userData} 
               onLogout={handleLogout}
               onUpdateUser={handleUpdateUser}
+              walletBalance={walletBalance}
+              ordersCount={orders.length}
+              addressCount={deliveryAddresses.length}
+              savedCount={savedItems.length}
             />
           } />
 
@@ -1750,7 +2234,7 @@ function App() {
             addresses={deliveryAddresses}
             selectedAddressId={selectedDeliveryAddressId}
             onSelectAddress={(id) => { setSelectedDeliveryAddressId(id); persistDeliveryState(id, selectedDeliverySlot) }}
-            onAddAddress={addDeliveryAddress}
+            onAddAddress={saveDeliveryAddress}
             onRemoveAddress={removeDeliveryAddress}
           />} />
 
@@ -1767,7 +2251,10 @@ function App() {
       {!locationPath.pathname.startsWith('/admin') &&
        !locationPath.pathname.startsWith('/checkout') &&
        !locationPath.pathname.startsWith('/payment') && (
-        <Footer onCategorySelect={(cat) => { handleCategorySelect(cat); navigate('/') }} />
+        <Footer 
+          onCategorySelect={(cat) => { handleCategorySelect(cat); navigate('/') }} 
+          onSubCategorySelect={(parent, sub) => { handleSubCategorySelect(parent, sub); navigate('/') }}
+        />
       )}
 
       {/* Toasts */}

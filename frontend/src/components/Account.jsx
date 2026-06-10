@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Breadcrumbs from './Breadcrumbs'
 
-export default function Account({ user, onLogout, onUpdateUser }) {
+export default function Account({ user, onLogout, onUpdateUser, walletBalance = 0, ordersCount = 0, addressCount = 0, savedCount = 0 }) {
   const navigate = useNavigate()
   const [editingField, setEditingField] = useState(null) // 'full_name', 'phone', 'email'
+  const [localUser, setLocalUser] = useState(user)
   const [formData, setFormData] = useState({
     full_name: '',
     phone: '',
@@ -13,8 +14,9 @@ export default function Account({ user, onLogout, onUpdateUser }) {
 
   useEffect(() => {
     if (user) {
+      setLocalUser(user)
       setFormData({
-        full_name: user.full_name || '',
+        full_name: user.full_name || user.username || '',
         phone: user.phone || '',
         email: user.email || ''
       })
@@ -34,12 +36,14 @@ export default function Account({ user, onLogout, onUpdateUser }) {
     const update = { [field]: formData[field] }
     const success = await onUpdateUser(update)
     if (success) {
+      setLocalUser(prev => ({ ...prev, ...update }))
+      setFormData(prev => ({ ...prev, ...update }))
       setEditingField(null)
     }
   }
 
   const handleCancel = (field) => {
-    setFormData(prev => ({ ...prev, [field]: user[field] || '' }))
+    setFormData(prev => ({ ...prev, [field]: localUser?.[field] || user?.[field] || '' }))
     setEditingField(null)
   }
 
@@ -58,7 +62,9 @@ export default function Account({ user, onLogout, onUpdateUser }) {
               autoFocus
             />
           ) : (
-            <div style={{ marginLeft: '3px', textOverflow: 'ellipsis', overflow: 'hidden', fontSize: '14px' }}>{user[field] || `Enter ${label}`}</div>
+            <div style={{ marginLeft: '3px', textOverflow: 'ellipsis', overflow: 'hidden', fontSize: '14px' }}>
+              {formData[field] || localUser?.[field] || user[field] || `Enter ${label}`}
+            </div>
           )}
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
@@ -77,74 +83,83 @@ export default function Account({ user, onLogout, onUpdateUser }) {
     )
   }
 
+  const displayName = user.full_name || user.username || user.email || 'Customer'
+
   return (
     <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '120px 2% 80px', fontFamily: 'ProximaNova, Helvetica, Arial, sans-serif' }}>
-      
-      {/* Breadcrumbs */}
       <Breadcrumbs items={[{ label: 'My Account' }]} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 10fr', gap: '40px', marginTop: '30px' }}>
-        
-        {/* Left Sidebar */}
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {/* Section 1 */}
-          <div style={{ display: 'flex', flexDirection: 'column', marginBottom: '40px' }}>
-            <div style={{ fontWeight: 600, borderColor: 'rgb(221, 221, 221)', borderBottomWidth: '1.6px', borderWidth: '0px 0px 1.6px', borderStyle: 'solid' }}>
-              <div style={{ color: 'rgb(80, 80, 80)', fontSize: '14px', paddingTop: '16px', paddingBottom: '10px', borderColor: 'rgb(118, 185, 0)', borderBottomWidth: '1.6px', display: 'inline-block', boxSizing: 'content-box', borderWidth: '0px 0px 1.6px', borderStyle: 'solid' }}>
-                <span style={{ fontWeight: 600 }}>PERSONAL DETAILS</span>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '32px', marginTop: '30px' }}>
+        <aside style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div style={{ background: '#fff', borderRadius: '18px', border: '1px solid #ececec', padding: '28px', boxShadow: '0 16px 40px rgba(0,0,0,0.04)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
+              <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: 'rgb(118, 185, 0)', display: 'grid', placeItems: 'center', color: '#fff', fontSize: '24px', fontWeight: 700 }}>S</div>
+              <div>
+                <p style={{ margin: 0, color: '#666', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Welcome back</p>
+                <h1 style={{ margin: '8px 0 0', fontSize: '28px', lineHeight: 1.1 }}>{displayName}</h1>
               </div>
             </div>
-            <div style={{ paddingTop: '8px', display: 'flex', flexDirection: 'column' }}>
-              <a href="#" onClick={(e) => { e.preventDefault(); navigate('/account') }} style={{ color: 'rgb(32, 32, 32)', marginBottom: '8px', cursor: 'pointer', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>Edit Profile</a>
-              <a href="#" onClick={(e) => { e.preventDefault(); navigate('/addresses') }} style={{ color: 'rgb(144, 144, 144)', marginBottom: '8px', cursor: 'pointer', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>Delivery Addresses</a>
-              <a href="#" onClick={(e) => { e.preventDefault(); navigate('/email-settings') }} style={{ color: 'rgb(144, 144, 144)', marginBottom: '8px', cursor: 'pointer', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>Email Addresses</a>
+            <p style={{ margin: 0, color: '#555', lineHeight: 1.8 }}>This is your account hub. Manage your profile details, wallet, delivery addresses, and order history from one place.</p>
+          </div>
+
+          <div style={{ display: 'grid', gap: '16px' }}>
+            <button onClick={() => navigate('/wallet')} style={{ width: '100%', padding: '16px 18px', borderRadius: '14px', border: '1px solid #e5f1d9', background: '#f6fff0', cursor: 'pointer', textAlign: 'left' }}>
+              <div style={{ fontSize: '14px', color: '#4f6339', fontWeight: 700 }}>Wallet balance</div>
+              <div style={{ marginTop: '6px', fontSize: '20px', fontWeight: 800, color: 'rgb(118, 185, 0)' }}>₹{walletBalance.toFixed(2)}</div>
+              <div style={{ marginTop: '8px', color: '#777', fontSize: '13px' }}>Add funds once and use them during checkout.</div>
+            </button>
+
+            <button onClick={() => navigate('/orders')} style={{ width: '100%', padding: '16px 18px', borderRadius: '14px', border: '1px solid #ececec', background: '#fff', cursor: 'pointer', textAlign: 'left' }}>
+              <div style={{ fontSize: '14px', color: '#333', fontWeight: 700 }}>Orders</div>
+              <div style={{ marginTop: '6px', fontSize: '20px', fontWeight: 800, color: '#111' }}>{ordersCount}</div>
+              <div style={{ marginTop: '8px', color: '#777', fontSize: '13px' }}>Track your recent purchases and order status.</div>
+            </button>
+
+            <button onClick={() => navigate('/addresses')} style={{ width: '100%', padding: '16px 18px', borderRadius: '14px', border: '1px solid #ececec', background: '#fff', cursor: 'pointer', textAlign: 'left' }}>
+              <div style={{ fontSize: '14px', color: '#333', fontWeight: 700 }}>Saved addresses</div>
+              <div style={{ marginTop: '6px', fontSize: '20px', fontWeight: 800, color: '#111' }}>{addressCount}</div>
+              <div style={{ marginTop: '8px', color: '#777', fontSize: '13px' }}>Faster checkout with your saved delivery locations.</div>
+            </button>
+
+            <button onClick={() => navigate('/cart')} style={{ width: '100%', padding: '16px 18px', borderRadius: '14px', border: '1px solid #ececec', background: '#fff', cursor: 'pointer', textAlign: 'left' }}>
+              <div style={{ fontSize: '14px', color: '#333', fontWeight: 700 }}>Saved for later</div>
+              <div style={{ marginTop: '6px', fontSize: '20px', fontWeight: 800, color: '#111' }}>{savedCount}</div>
+              <div style={{ marginTop: '8px', color: '#777', fontSize: '13px' }}>Items you have saved while deciding later.</div>
+            </button>
+          </div>
+        </aside>
+
+        <section style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div style={{ background: '#fff', borderRadius: '18px', border: '1px solid #ececec', padding: '32px', boxShadow: '0 16px 40px rgba(0,0,0,0.04)' }}>
+            <h2 style={{ margin: '0 0 14px', fontSize: '24px', color: '#222' }}>Profile settings</h2>
+            <p style={{ margin: '0 0 24px', color: '#555', lineHeight: 1.8 }}>Update the details we use to personalize your experience and keep your account information current.</p>
+            <div style={{ display: 'grid', gap: '18px' }}>
+              {renderField('Name', 'full_name')}
+              {renderField('Mobile Number', 'phone', 'tel')}
+              {renderField('Email', 'email', 'email')}
             </div>
           </div>
 
-          {/* Section 2 */}
-          <div style={{ display: 'flex', flexDirection: 'column', marginBottom: '40px' }}>
-            <div style={{ fontWeight: 600, borderColor: 'rgb(221, 221, 221)', borderBottomWidth: '1.6px', borderWidth: '0px 0px 1.6px', borderStyle: 'solid' }}>
-              <div style={{ color: 'rgb(80, 80, 80)', fontSize: '14px', paddingTop: '16px', paddingBottom: '10px', borderColor: 'rgb(118, 185, 0)', borderBottomWidth: '1.6px', display: 'inline-block', boxSizing: 'content-box', borderWidth: '0px 0px 1.6px', borderStyle: 'solid' }}>
-                <span style={{ fontWeight: 600 }}>SHOP FROM</span>
-              </div>
-            </div>
-            <div style={{ paddingTop: '8px', display: 'flex', flexDirection: 'column' }}>
-              <a href="#" onClick={(e) => { e.preventDefault(); navigate('/smart-basket') }} style={{ color: 'rgb(144, 144, 144)', marginBottom: '8px', cursor: 'pointer', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>Smart Basket</a>
-              <a href="#" onClick={(e) => { e.preventDefault(); navigate('/orders') }} style={{ color: 'rgb(144, 144, 144)', marginBottom: '8px', cursor: 'pointer', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>Past Orders</a>
-            </div>
-          </div>
-
-          {/* Section 3 */}
-          <div style={{ display: 'flex', flexDirection: 'column', marginBottom: '40px' }}>
-            <div style={{ fontWeight: 600, borderColor: 'rgb(221, 221, 221)', borderBottomWidth: '1.6px', borderWidth: '0px 0px 1.6px', borderStyle: 'solid' }}>
-              <div style={{ color: 'rgb(80, 80, 80)', fontSize: '14px', paddingTop: '16px', paddingBottom: '10px', borderColor: 'rgb(118, 185, 0)', borderBottomWidth: '1.6px', display: 'inline-block', boxSizing: 'content-box', borderWidth: '0px 0px 1.6px', borderStyle: 'solid' }}>
-                <span style={{ fontWeight: 600 }}>MY ACCOUNT</span>
-              </div>
-            </div>
-            <div style={{ paddingTop: '8px', display: 'flex', flexDirection: 'column' }}>
-              <a href="#" onClick={(e) => { e.preventDefault(); navigate('/orders') }} style={{ color: 'rgb(144, 144, 144)', marginBottom: '8px', cursor: 'pointer', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>My Orders</a>
-              <a href="#" onClick={(e) => { e.preventDefault(); navigate('/wallet') }} style={{ color: 'rgb(144, 144, 144)', marginBottom: '8px', cursor: 'pointer', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>My Wallet</a>
-              <a href="#" onClick={(e) => { e.preventDefault(); onLogout && onLogout() }} style={{ color: 'rgb(204, 0, 0)', marginBottom: '8px', cursor: 'pointer', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>Logout</a>
-            </div>
-          </div>
-        </div>
-
-        {/* Main Content */}
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ background: 'rgb(255, 255, 255)', padding: '20px', width: '100%' }}>
-            
-            {renderField('Name', 'full_name')}
-            {renderField('Mobile Number', 'phone', 'tel')}
-            {renderField('Email', 'email', 'email')}
-
-            {/* Newsletter Checkbox */}
-            <label style={{ color: 'rgb(102, 102, 102)', cursor: 'pointer', display: 'flex', alignItems: 'center', marginTop: '20px' }}>
-              <input type="checkbox" defaultChecked style={{ cursor: 'pointer', width: '16px', height: '16px', marginRight: '10px', accentColor: 'rgb(118, 185, 0)' }} />
-              <span style={{ fontSize: '14px' }}>Send me mails on promotions, offers and services</span>
+          <div style={{ background: '#fff', borderRadius: '18px', border: '1px solid #ececec', padding: '30px', boxShadow: '0 16px 40px rgba(0,0,0,0.04)' }}>
+            <h3 style={{ margin: '0 0 14px', fontSize: '20px', color: '#222' }}>Account preferences</h3>
+            <p style={{ margin: '0 0 18px', color: '#555', lineHeight: 1.8 }}>Control how you hear from us and where we send order updates.</p>
+            <label style={{ display: 'flex', gap: '10px', alignItems: 'center', background: '#f8f8f8', padding: '16px', borderRadius: '12px', border: '1px solid #ececec', fontSize: '14px', color: '#333' }}>
+              <input type="checkbox" defaultChecked style={{ width: '18px', height: '18px', accentColor: 'rgb(118, 185, 0)' }} />
+              Receive promotional emails, offers, and order updates.
             </label>
-
           </div>
-        </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px' }}>
+            <button onClick={() => navigate('/wallet')} style={{ padding: '18px', borderRadius: '16px', border: '1px solid #ececec', background: '#fff', textAlign: 'left', cursor: 'pointer' }}>
+              <div style={{ fontSize: '14px', color: '#999', marginBottom: '6px' }}>Wallet</div>
+              <div style={{ fontSize: '18px', fontWeight: 700, color: 'rgb(118, 185, 0)' }}>Use wallet at checkout</div>
+            </button>
+            <button onClick={() => navigate('/orders')} style={{ padding: '18px', borderRadius: '16px', border: '1px solid #ececec', background: '#fff', textAlign: 'left', cursor: 'pointer' }}>
+              <div style={{ fontSize: '14px', color: '#999', marginBottom: '6px' }}>Order history</div>
+              <div style={{ fontSize: '18px', fontWeight: 700, color: '#333' }}>Track all recent orders</div>
+            </button>
+          </div>
+        </section>
       </div>
     </div>
   )

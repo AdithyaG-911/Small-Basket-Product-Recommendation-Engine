@@ -35,13 +35,23 @@ export default function MyOrders({ orders = [] }) {
                   <span style={{ fontWeight: 600 }}>SB-{order.id.toString().padStart(6, '0')}</span>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <span style={{ 
-                    padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 700,
-                    backgroundColor: order.status === 'Delivered' ? 'rgb(228, 241, 204)' : '#fff3cd',
-                    color: order.status === 'Delivered' ? 'rgb(94, 148, 0)' : '#856404'
-                  }}>
-                    {order.status.toUpperCase()}
-                  </span>
+                  {(() => {
+                    const status = (order.status || 'Pending').toLowerCase()
+                    const metadata = {
+                      delivered: { bg: 'rgb(228, 241, 204)', color: 'rgb(94, 148, 0)' },
+                      confirmed: { bg: 'rgb(221, 237, 255)', color: 'rgb(16, 94, 177)' },
+                      pending: { bg: '#fff3cd', color: '#856404' }
+                    }[status] || { bg: '#ececec', color: '#444' }
+                    return (
+                      <span style={{ 
+                        padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 700,
+                        backgroundColor: metadata.bg,
+                        color: metadata.color
+                      }}>
+                        {order.status ? order.status.toUpperCase() : 'PENDING'}
+                      </span>
+                    )
+                  })()}
                 </div>
               </div>
               
@@ -59,6 +69,19 @@ export default function MyOrders({ orders = [] }) {
                   </div>
                 ))}
               </div>
+
+              {order.status && order.status.toLowerCase() !== 'delivered' && (
+                <div style={{ marginTop: '12px', padding: '12px', borderRadius: '10px', background: '#fff7e6', color: '#7f5c00', fontSize: '13px' }}>
+                  Your order is still in progress. For updates or help, please visit the Contact Us page.
+                </div>
+              )}
+
+              {order.address && (
+                <div style={{ marginTop: '12px', padding: '12px', borderRadius: '10px', background: '#f8faf4', color: '#444', fontSize: '13px', lineHeight: 1.6 }}>
+                  <strong>Delivery to:</strong> {order.address}
+                  {order.address_details && <div style={{ marginTop: '4px', color: '#666' }}>{order.address_details}</div>}
+                </div>
+              )}
 
               <div style={{ marginTop: '20px', textAlign: 'right' }}>
                 <button 

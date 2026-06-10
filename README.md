@@ -44,8 +44,10 @@ ecommerce/
 
 ## Quick Start 🚀
 
+For a full clone/pull setup guide, including why `backend/ecommerce.db` is not pushed and how to restore product data, see [GITHUB_SETUP.md](GITHUB_SETUP.md).
+
 ### Prerequisites
-- Python 3.7+
+- Python 3.9 or 3.10 recommended
 - Node.js 14+
 - npm
 

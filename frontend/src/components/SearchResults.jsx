@@ -26,9 +26,23 @@ export default function SearchResults({
 
   // Dynamically group products into categories and subcategories
   const categoryGroups = {}
+  const safeText = (value) => {
+    const text = String(value || '').trim()
+    if (!text) return ''
+    return text
+  }
+  const getSubCategory = (product) => {
+    const candidate = safeText(product.subcategory) || safeText(product.brand) || safeText(product.vendor)
+    if (candidate) return candidate
+    if (product.name) {
+      const tokens = product.name.split(' ').filter(Boolean)
+      return tokens.length > 0 ? safeText(tokens[0]) : 'General'
+    }
+    return 'General'
+  }
   products.forEach(p => {
-    const mainCat = p.category || 'Others'
-    const subCat = p.brand || p.vendor || (p.name ? p.name.split(' ')[0] : 'General')
+    const mainCat = safeText(p.category) || safeText(p.subcategory) || safeText(p.type) || 'Others'
+    const subCat = getSubCategory(p)
     if (!categoryGroups[mainCat]) {
       categoryGroups[mainCat] = new Set()
     }

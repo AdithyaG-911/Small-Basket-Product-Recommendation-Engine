@@ -40,7 +40,10 @@ const linkStyle = {
   backgroundColor: 'transparent', fontWeight: 400, fontSize: '14px',
 }
 
-export default function Footer({ onCategorySelect }) {
+import { useNavigate } from 'react-router-dom'
+
+export default function Footer({ onCategorySelect, onSubCategorySelect }) {
+  const navigate = useNavigate()
   return (
     <footer style={{ fontFamily: 'ProximaNova, Helvetica, Arial, sans-serif' }}>
       {/* Categories & Brands section */}
@@ -60,7 +63,25 @@ export default function Footer({ onCategorySelect }) {
                   <a
                     href="#"
                     style={linkStyle}
-                    onClick={e => { e.preventDefault(); onCategorySelect && onCategorySelect(category) }}
+                    onClick={e => {
+                      e.preventDefault()
+                      if (label !== category) {
+                        if (onSubCategorySelect) {
+                          onSubCategorySelect(category, label)
+                        } else {
+                          window.dispatchEvent(new CustomEvent('smallbasket:subcategorySelect', { detail: { category, subcategory: label } }))
+                          navigate('/')
+                        }
+                      } else {
+                        if (onCategorySelect) {
+                          onCategorySelect(category)
+                        } else {
+                          // Fallback: dispatch a global event and navigate home so apps without prop still respond
+                          window.dispatchEvent(new CustomEvent('smallbasket:categorySelect', { detail: { category } }))
+                          navigate('/')
+                        }
+                      }
+                    }}
                   >
                     {label}
                   </a>
@@ -80,7 +101,15 @@ export default function Footer({ onCategorySelect }) {
                   <a
                     href="#"
                     style={linkStyle}
-                    onClick={e => { e.preventDefault(); onCategorySelect && onCategorySelect('All') }}
+                    onClick={e => {
+                      e.preventDefault()
+                      if (onCategorySelect) {
+                        onCategorySelect('All')
+                      } else {
+                        window.dispatchEvent(new CustomEvent('smallbasket:categorySelect', { detail: { category: 'All' } }))
+                        navigate('/')
+                      }
+                    }}
                   >
                     {brand}
                   </a>
@@ -104,12 +133,12 @@ export default function Footer({ onCategorySelect }) {
             fontSize: '12px', color: 'rgb(221, 221, 221)', lineHeight: '22px', margin: '0',
             fontWeight: 400
           }}>
-            {CITIES_SERVED.map((city, idx) => (
-              <span key={city}>
-                <a href="#" style={{ color: 'rgb(221, 221, 221)', textDecoration: 'none' }} onClick={e => e.preventDefault()}>{city}</a>
-                {idx < CITIES_SERVED.length - 1 ? ' | ' : ''}
-              </span>
-            ))}
+{CITIES_SERVED.map((city, idx) => (
+               <span key={city}>
+                 <span style={{ color: 'rgb(221, 221, 221)', cursor: 'default' }}>{city}</span>
+                 {idx < CITIES_SERVED.length - 1 ? ' | ' : ''}
+               </span>
+             ))}
           </p>
         </div>
       </div>

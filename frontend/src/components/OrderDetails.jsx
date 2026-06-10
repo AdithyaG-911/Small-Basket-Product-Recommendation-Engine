@@ -48,6 +48,10 @@ export default function OrderDetails({ orders = [] }) {
                 <p style={{ margin: 0, color: '#999', fontSize: '13px' }}>TOTAL AMOUNT</p>
                 <p style={{ margin: '8px 0 0', fontSize: '16px', fontWeight: 700 }}>₹{Number(order.total_price || 0).toFixed(2)}</p>
               </div>
+              <div style={{ flex: '1 1 240px' }}>
+                <p style={{ margin: 0, color: '#999', fontSize: '13px' }}>PAYMENT STATUS</p>
+                <p style={{ margin: '8px 0 0', fontSize: '16px', fontWeight: 700, color: order.payment_status === 'Paid' ? 'rgb(94, 148, 0)' : '#d97706' }}>{order.payment_status || 'Pending'}</p>
+              </div>
               {order.delivery_slot && (
                 <div style={{ flex: '1 1 240px' }}>
                   <p style={{ margin: 0, color: '#999', fontSize: '13px' }}>DELIVERY SLOT</p>
@@ -60,6 +64,8 @@ export default function OrderDetails({ orders = [] }) {
               <div style={{ background: '#f7f7f7', borderRadius: '12px', padding: '20px' }}>
                 <p style={{ margin: '0 0 8px', fontSize: '13px', color: '#999' }}>DELIVERY ADDRESS</p>
                 <p style={{ margin: 0, fontSize: '15px', color: '#333', lineHeight: 1.7 }}>{order.address}</p>
+                {order.address_details && <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#666', lineHeight: 1.6 }}>{order.address_details}</p>}
+                {order.coordinates && <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#888' }}>Pin: {Number(order.coordinates.lat).toFixed(6)}, {Number(order.coordinates.lon).toFixed(6)}</p>}
               </div>
             )}
 
@@ -87,6 +93,10 @@ export default function OrderDetails({ orders = [] }) {
                   <p style={{ margin: 0, color: '#666' }}>No item details are available for this order.</p>
                 )}
               </div>
+            </div>
+
+            <div style={{ marginTop: '18px', padding: '18px', borderRadius: '12px', background: '#fff7e6', border: '1px solid #fde3b7', color: '#7f5c00' }}>
+              If your order is still pending, our team is working to confirm payment and prepare it for delivery. Visit Contact Us for help with delivery timing or order updates.
             </div>
           </div>
         </section>

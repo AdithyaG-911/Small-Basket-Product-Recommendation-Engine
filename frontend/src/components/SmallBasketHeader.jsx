@@ -349,7 +349,6 @@ export default function SmallBasketHeader({
                   />
                   <button 
                     onClick={() => {
-                      onUpdateQuantity && onUpdateQuantity(product.id, 1)
                       onAddToCart && onAddToCart(product.id)
                     }}
                     style={{

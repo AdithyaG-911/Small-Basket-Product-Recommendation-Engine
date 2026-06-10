@@ -181,6 +181,32 @@ export default function AdminDashboard({ products = [], adminPassword = 'admin12
     { label: 'Revenue', value: `₹${(orders.reduce((s, o) => s + (o.total_price || 0), 0)).toFixed(0)}`, icon: '💰', color: '#f39c12', bg: 'rgba(243,156,18,0.1)' },
   ]
 
+  const orderStatusCounts = Object.entries(orders.reduce((acc, order) => {
+    const status = order.status || 'Pending'
+    acc[status] = (acc[status] || 0) + 1
+    return acc
+  }, {})).map(([status, count]) => ({ status, count }))
+
+  const topCustomers = [...customers]
+    .sort((a, b) => (b.total_spend || 0) - (a.total_spend || 0))
+    .slice(0, 5)
+
+  const totalRevenue = orders.reduce((sum, order) => sum + (order.total_price || 0), 0)
+  const avgOrderValue = orders.length ? totalRevenue / orders.length : 0
+  const activeCustomers = new Set(orders.map((order) => order.user_id)).size
+  const paymentMethodCounts = Object.entries(orders.reduce((acc, order) => {
+    const method = order.payment_method || 'Unknown'
+    acc[method] = (acc[method] || 0) + 1
+    return acc
+  }, {}))
+  const salesByDay = Object.entries(orders.reduce((acc, order) => {
+    const day = new Date(order.created_at).toLocaleDateString('en-IN')
+    acc[day] = (acc[day] || 0) + (order.total_price || 0)
+    return acc
+  }, {}))
+    .sort(([a], [b]) => new Date(a) - new Date(b))
+    .slice(-7)
+
   const sidebarItems = [
     { label: 'Overview', icon: '📊' },
     { label: 'Products', icon: '📦' },
@@ -287,6 +313,95 @@ export default function AdminDashboard({ products = [], adminPassword = 'admin12
               ))}
             </div>
 
+            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '24px', marginBottom: '32px' }}>
+              <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1a1a2e', marginBottom: '18px' }}>Orders by Status</h2>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {orderStatusCounts.length ? orderStatusCounts.map((item) => {
+                    const width = Math.min(100, Math.max(8, (item.count / Math.max(...orderStatusCounts.map((v) => v.count))) * 100))
+                    return (
+                      <div key={item.status} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ width: '80px', color: '#555', fontSize: '13px' }}>{item.status}</span>
+                        <div style={{ flex: 1, background: '#f2f7ff', borderRadius: '999px', height: '12px', overflow: 'hidden' }}>
+                          <div style={{ width: `${width}%`, height: '100%', borderRadius: '999px', background: '#4f8cff' }} />
+                        </div>
+                        <span style={{ width: '40px', textAlign: 'right', color: '#333', fontSize: '13px' }}>{item.count}</span>
+                      </div>
+                    )
+                  }) : <div style={{ color: '#999', fontSize: '13px' }}>No order data available yet.</div>}
+                </div>
+              </div>
+              <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1a1a2e', marginBottom: '18px' }}>Top Customers & Sales</h2>
+                <div style={{ display: 'grid', gap: '20px' }}>
+                  <div>
+                    <div style={{ color: '#666', fontSize: '13px', marginBottom: '12px' }}>Top spenders</div>
+                    {topCustomers.length ? topCustomers.map((customer) => {
+                      const maxSpend = topCustomers[0]?.total_spend || 1
+                      const width = Math.min(100, Math.max(12, ((customer.total_spend || 0) / maxSpend) * 100))
+                      return (
+                        <div key={customer.id} style={{ marginBottom: '10px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', color: '#333', marginBottom: '6px' }}>
+                            <span>{customer.username}</span>
+                            <span style={{ fontWeight: 700 }}>₹{(customer.total_spend || 0).toFixed(0)}</span>
+                          </div>
+                          <div style={{ background: '#f6f9f8', borderRadius: '999px', height: '10px', overflow: 'hidden' }}>
+                            <div style={{ width: `${width}%`, height: '100%', background: '#5cb85c' }} />
+                          </div>
+                        </div>
+                      )
+                    }) : <div style={{ color: '#999', fontSize: '13px' }}>No customer spend data yet.</div>}
+                  </div>
+                  <div>
+                    <div style={{ color: '#666', fontSize: '13px', marginBottom: '12px' }}>Recent sales trend</div>
+                    <div style={{ display: 'grid', gap: '10px' }}>
+                      {salesByDay.length ? salesByDay.map(([day, total]) => {
+                        const maxTotal = Math.max(...salesByDay.map(([, value]) => value), 1)
+                        const width = Math.min(100, Math.max(10, (total / maxTotal) * 100))
+                        return (
+                          <div key={day} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ width: '70px', color: '#555', fontSize: '12px' }}>{day}</span>
+                            <div style={{ flex: 1, background: '#f4f7fc', borderRadius: '999px', height: '10px', overflow: 'hidden' }}>
+                              <div style={{ width: `${width}%`, height: '100%', background: '#ff9f43' }} />
+                            </div>
+                            <span style={{ width: '52px', textAlign: 'right', color: '#333', fontSize: '12px' }}>₹{Number(total).toFixed(0)}</span>
+                          </div>
+                        )
+                      }) : <div style={{ color: '#999', fontSize: '13px' }}>Sales timeline unavailable.</div>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '24px', marginBottom: '32px' }}>
+              <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1a1a2e', marginBottom: '14px' }}>Average Order Value</h2>
+                <div style={{ fontSize: '32px', fontWeight: 800, color: 'rgb(118,185,0)' }}>₹{avgOrderValue.toFixed(0)}</div>
+                <p style={{ color: '#666', fontSize: '13px', marginTop: '8px' }}>{orders.length} orders total, average across the current dataset.</p>
+              </div>
+              <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1a1a2e', marginBottom: '14px' }}>Active Customers</h2>
+                <div style={{ fontSize: '32px', fontWeight: 800, color: '#3498db' }}>{activeCustomers}</div>
+                <p style={{ color: '#666', fontSize: '13px', marginTop: '8px' }}>Distinct customers in the current order history.</p>
+              </div>
+              <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1a1a2e', marginBottom: '14px' }}>Payment Methods</h2>
+                {paymentMethodCounts.length ? paymentMethodCounts.map(([method, count]) => {
+                  const width = Math.min(100, Math.max(10, (count / Math.max(...paymentMethodCounts.map(([,c]) => c))) * 100))
+                  return (
+                    <div key={method} style={{ marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px', color: '#333' }}>
+                        <span>{method}</span>
+                        <span>{count}</span>
+                      </div>
+                      <div style={{ background: '#f4f7fc', borderRadius: '999px', height: '10px', overflow: 'hidden' }}>
+                        <div style={{ width: `${width}%`, height: '100%', background: '#4f8cff' }} />
+                      </div>
+                    </div>
+                  )
+                }) : <div style={{ color: '#999', fontSize: '13px' }}>No payment method data yet.</div>}
+              </div>
+            </div>
             {/* Recent Orders */}
             <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
               <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1a1a2e', marginBottom: '20px' }}>Recent Orders</h2>

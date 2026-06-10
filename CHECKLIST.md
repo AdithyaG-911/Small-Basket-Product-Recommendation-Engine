@@ -18,15 +18,15 @@ Verify everything before submitting your project!
 - [ ] Site accessible at `http://localhost:5173`
 - [ ] Header displays correctly with logo and buttons
 - [ ] Products grid shows product cards
-- [ ] Can click "Add to Cart" button
-- [ ] Cart counter increases when products added
+- [x] Can click "Add to Cart" button
+- [x] Cart counter increases when products added
 
 ## Feature Verification ✓
 
 - [ ] **Homepage**:
   - [ ] Products grid displays
   - [ ] Recommendations section appears (after viewing products)
-  - [ ] Add to cart buttons work
+  - [x] Add to cart buttons work
 
 - [ ] **Cart**:
   - [ ] Click cart button shows shopping cart page
@@ -155,7 +155,7 @@ Verify everything before submitting your project!
   - [ ] Can show smart recommendations
   - [ ] Purchase history weights recommendations
   - [ ] Browsing history weights recommendations
-  - [ ] Similar products recommended
+  - [x] Similar products recommended
 
 ## Before Submission ✓
 

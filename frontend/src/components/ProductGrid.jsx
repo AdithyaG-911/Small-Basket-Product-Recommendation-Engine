@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import plusIcon from './plus.svg'
 import minusIcon from './minus.svg'
 import saveIcon from './save_icon.svg'
+import { getProductUnitText, toSentenceCase, toTitleCase, getPlaceholderColor, getCategoryPlaceholderSVG } from '../utils/units'
 
 export default function ProductGrid({
   products,
@@ -82,10 +83,14 @@ export default function ProductGrid({
     return colors[category?.toLowerCase()] || '#f5f5f5'
   }
 
+  // product unit formatting moved to shared helper
+
   return (
     <div className="product-grid">
-      {products.map((product) => (
-        <article key={product.id} className="product-card bb-product-card">
+      {products.map((product) => {
+        const unitText = getProductUnitText(product)
+        return (
+          <article key={product.id} className="product-card bb-product-card">
           <div
             className="product-image-container"
             onClick={() => {
@@ -105,9 +110,12 @@ export default function ProductGrid({
               ) : (
                 <div
                   className="placeholder"
-                  style={{ backgroundColor: getPlaceholderImage(product.category) }}
+                  style={{ backgroundColor: getPlaceholderColor(product.category), display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#444' }}
                 >
-                  <span>{formatCategory(product.category) || 'Product'}</span>
+                  <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {getCategoryPlaceholderSVG(product.category)}
+                  </div>
+                  <span style={{ marginTop: 8, fontSize: '12px', color: '#333' }}>{toTitleCase(product.category) || 'Product'}</span>
                 </div>
               )}
 
@@ -145,9 +153,11 @@ export default function ProductGrid({
               </div>
             )}
 
-            <div className="size-selector">
-              <span>{toSentenceCase(product.size || product.unit || '1 pc')}</span>
-            </div>
+            {unitText && (
+              <div className="size-selector">
+                <span>{toSentenceCase(unitText)}</span>
+              </div>
+            )}
 
             {product.explanation && (
               <div className="product-explanation" style={{ 
@@ -161,6 +171,11 @@ export default function ProductGrid({
 
             <div className="price-section">
               <div className="current-price">₹{product.price}</div>
+              {unitText && (
+                <div className="unit-text" style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
+                  per {toSentenceCase(unitText)}
+                </div>
+              )}
               {product.mrp && <div className="mrp-price">₹{product.mrp}</div>}
             </div>
           </div>
@@ -215,10 +230,7 @@ export default function ProductGrid({
               ) : (
                 <button
                   className="add-btn-outline"
-                  onClick={() => {
-                    onUpdateQuantity(product.id, 1)
-                    onAddToCart(product.id)
-                  }}
+                  onClick={() => onAddToCart(product.id)}
                   type="button"
                 >
                   Add
@@ -227,7 +239,8 @@ export default function ProductGrid({
             </div>
           </div>
         </article>
-      ))}
+        )
+      })}
     </div>
   )
 }

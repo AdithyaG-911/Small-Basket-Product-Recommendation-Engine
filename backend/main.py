@@ -6,13 +6,14 @@ Uses trained ML models with 99% accuracy
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Boolean, inspect, text, func
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Boolean, inspect, text, func, case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, relationship, Session, declarative_base
 from pydantic import BaseModel
 import json
 import csv
 import hashlib
+import re
 from typing import List, Optional
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -56,6 +57,8 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     category = Column(String)
+    subcategory = Column(String, nullable=True)
+    sub_subcategory = Column(String, nullable=True)
     brand = Column(String, nullable=True)
     price = Column(Float)
     description = Column(String)
@@ -196,6 +199,12 @@ def ensure_product_columns():
     if "brand" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE products ADD COLUMN brand VARCHAR"))
+    if "subcategory" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE products ADD COLUMN subcategory VARCHAR"))
+    if "sub_subcategory" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE products ADD COLUMN sub_subcategory VARCHAR"))
 
 def ensure_user_columns():
     inspector = inspect(engine)
@@ -259,6 +268,94 @@ def get_image_url(category, product_name, index):
     return f"https://picsum.photos/400/300?random={img_id}"
 
 
+def normalize_category_label(label):
+    if not label:
+        return ''
+    value = ' '.join(str(label).strip().split())
+    key = value.lower().replace('&', 'and').replace(',', '').replace('  ', ' ').strip()
+    canonical = {
+        'beauty and hygiene': 'Beauty & Hygiene',
+        'snacks and branded foods': 'Snacks & Branded Foods',
+        'cleaning and household': 'Cleaning & Household',
+        'beverages': 'Beverages',
+        'gourmet and world food': 'Gourmet & World Food',
+        'eggs meat and fish': 'Eggs, Meat & Fish',
+        'eggs meat fish': 'Eggs, Meat & Fish',
+        'bakery cakes and dairy': 'Bakery, Cakes & Dairy',
+        'foodgrains oil and masala': 'Foodgrains, Oil & Masala',
+        'kitchen garden and pets': 'Kitchen, Garden & Pets',
+        'baby care': 'Baby Care',
+        'home and garden': 'Home & Garden',
+        'fresh produce': 'Fresh Produce',
+        'fruits and vegetables': 'Fruits & Vegetables',
+        'books': 'Books',
+        'electronics': 'Electronics',
+        'fashion': 'Fashion',
+        'sports': 'Sports',
+        'toys': 'Toys',
+        'groceries': 'Groceries',
+        'food': 'Food',
+    }
+    if key in canonical:
+        return canonical[key]
+    if 'rice' in key and 'foodgrains' in key:
+        return 'Foodgrains, Oil & Masala'
+    if 'oil' in key or 'masala' in key or 'atta' in key or 'ghee' in key:
+        return 'Foodgrains, Oil & Masala'
+    if 'snack' in key or 'chips' in key or 'biscuit' in key or 'chocolate' in key or 'sweets' in key:
+        return 'Snacks & Branded Foods'
+    if 'tea' in key or 'coffee' in key or 'juice' in key or 'drink' in key:
+        return 'Beverages'
+    if 'clean' in key or 'detergent' in key or 'household' in key or 'soap' in key:
+        return 'Cleaning & Household'
+    if 'beauty' in key or 'hygiene' in key or 'personal care' in key or 'shampoo' in key or 'skincare' in key or 'cosmetic' in key:
+        return 'Beauty & Hygiene'
+    if 'baby' in key or 'diaper' in key:
+        return 'Baby Care'
+    if 'garden' in key or 'home' in key or 'furniture' in key or 'kitchen' in key:
+        return 'Home & Garden'
+    if 'egg' in key or 'meat' in key or 'fish' in key or 'chicken' in key or 'mutton' in key:
+        return 'Eggs, Meat & Fish'
+    if 'fruit' in key or 'vegetable' in key:
+        return 'Fruits & Vegetables'
+    if 'gourmet' in key or 'world' in key or 'food' in key:
+        return 'Gourmet & World Food'
+    if 'electronic' in key or 'device' in key or 'appliance' in key:
+        return 'Electronics'
+    if 'book' in key:
+        return 'Books'
+    if 'toy' in key:
+        return 'Toys'
+    if 'sports' in key or 'fitness' in key:
+        return 'Sports'
+
+    return ' '.join([w.capitalize() for w in value.replace('&', ' & ').split()])
+
+
+def normalize_category_path(raw_category):
+    if not raw_category:
+        return 'Others', None, None
+
+    cleaned = str(raw_category).strip()
+    if not cleaned:
+        return 'Others', None, None
+
+    separators = ['/', '>', '|', '\\', '»', '–', '-']
+    normalized = cleaned
+    for sep in separators:
+        normalized = normalized.replace(sep, '/')
+    parts = [part.strip() for part in normalized.split('/') if part.strip()]
+
+    if len(parts) > 1 and parts[0].lower() in ['home', 'all', 'shop', 'shop by category', 'categories']:
+        parts = parts[1:]
+
+    main = normalize_category_label(parts[0]) if parts else 'Others'
+    sub = normalize_category_label(parts[1]) if len(parts) > 1 else None
+    sub_sub = normalize_category_label(parts[2]) if len(parts) > 2 else None
+
+    return main, sub, sub_sub
+
+
 def pick_csv_path(csv_file=None):
     preferred_files = [
         csv_file,
@@ -290,12 +387,14 @@ def seed_products_from_csv(csv_file=None, limit=2000, replace=False):
             for row in reader:
                 if limit and count >= limit:
                     break
-                category = row.get('Category') or row.get('category') or 'General'
+                raw_category = row.get('Category') or row.get('category') or 'General'
+                raw_subcategory = row.get('Sub-Category') or row.get('Sub_Category') or row.get('subcategory') or ''
+                raw_sub_subcategory = row.get('Sub-sub-Category') or row.get('Sub_Sub-Category') or row.get('sub_subcategory') or ''
                 sku_name = row.get('SKU Name') or row.get('name') or 'Product'
                 brand = row.get('Brand') or row.get('brand') or ''
                 price = row.get('MRP') or row.get('price') or '100'
                 description = row.get('About the Product') or row.get('description') or ''
-                image_url = row.get('Image Link') or row.get('image_url') or get_image_url(category, sku_name, count)
+                image_url = row.get('Image Link') or row.get('image_url') or get_image_url(raw_category, sku_name, count)
                 product_url = row.get('Product Link') or row.get('product_url') or None
 
                 try:
@@ -305,9 +404,17 @@ def seed_products_from_csv(csv_file=None, limit=2000, replace=False):
                 if parsed_price <= 0:
                     parsed_price = 100.0
 
+                category, subcategory, sub_subcategory = normalize_category_path(raw_category)
+                if raw_subcategory:
+                    subcategory = normalize_category_label(raw_subcategory)
+                if raw_sub_subcategory:
+                    sub_subcategory = normalize_category_label(raw_sub_subcategory)
+
                 product = Product(
                     name=sku_name[:200],
                     category=category[:100],
+                    subcategory=subcategory[:100] if subcategory else None,
+                    sub_subcategory=sub_subcategory[:100] if sub_subcategory else None,
                     brand=brand[:100] if brand else None,
                     description=description[:500],
                     price=parsed_price,
@@ -342,12 +449,15 @@ def seed_synthetic(num_products=100):
 
         for i in range(num_products):
             category = categories[i % len(categories)]
+            parsed_category, parsed_subcategory, parsed_sub_subcategory = normalize_category_path(category)
             product_type = product_types[i % len(product_types)]
             product_name = f"{product_type} {category.split()[0]} Item {i + 1}"
             image_url = get_image_url(category, product_name, i)
             product = Product(
                 name=product_name,
-                category=category,
+                category=parsed_category,
+                subcategory=parsed_subcategory,
+                sub_subcategory=parsed_sub_subcategory,
                 brand=product_type,
                 description=f'High quality {category.lower()} product with amazing features. Perfect for daily use.',
                 price=float(50 + (i % 500)),
@@ -390,6 +500,8 @@ class ReviewResponse(BaseModel):
 class ProductCreate(BaseModel):
     name: str
     category: str
+    subcategory: Optional[str] = None
+    sub_subcategory: Optional[str] = None
     brand: Optional[str] = None
     price: float
     description: str
@@ -400,6 +512,8 @@ class ProductResponse(BaseModel):
     id: int
     name: str
     category: str
+    subcategory: Optional[str] = None
+    sub_subcategory: Optional[str] = None
     brand: Optional[str] = None
     price: float
     description: str
@@ -418,6 +532,8 @@ class ProductRecommendationResponse(BaseModel):
     id: int
     name: str
     category: str
+    subcategory: Optional[str] = None
+    sub_subcategory: Optional[str] = None
     brand: Optional[str] = None
     price: float
     description: str
@@ -665,7 +781,23 @@ class RecommendationEngine:
             if len(similar_products) >= n_recommendations:
                 break
                 
-        return [ProductResponse.from_orm(p) for p in similar_products]
+        # Convert ORM objects to plain dicts to avoid lazy-loaded relationships
+        result = []
+        for p in similar_products:
+            result.append({
+                'id': p.id,
+                'name': p.name,
+                'category': p.category or '',
+                'brand': p.brand,
+                'price': p.price,
+                'description': p.description,
+                'image_url': p.image_url,
+                'product_url': p.product_url,
+                'rating': None,
+                'reviewsCount': 0,
+                'reviews': []
+            })
+        return result
     
     def get_weather_based_recommendations(self, n_recommendations: int = 3) -> List[tuple]:
         """Get recommendations based on current season/weather with explanations
@@ -1074,9 +1206,24 @@ class RecommendationEngine:
                     if similarity_score > 0.1:  # Threshold
                         similar_products.append((product, similarity_score))
             
-            # Sort by similarity and return top N
+            # Sort by similarity and return top N as plain dicts
             similar_products.sort(key=lambda x: x[1], reverse=True)
-            return [ProductResponse.from_orm(p) for p, _ in similar_products[:n_recommendations]]
+            out = []
+            for p, _ in similar_products[:n_recommendations]:
+                out.append({
+                    'id': p.id,
+                    'name': p.name,
+                    'category': p.category or '',
+                    'brand': p.brand,
+                    'price': p.price,
+                    'description': p.description,
+                    'image_url': p.image_url,
+                    'product_url': p.product_url,
+                    'rating': None,
+                    'reviewsCount': 0,
+                    'reviews': []
+                })
+            return out
             
         except Exception as e:
             print(f"Visual similarity error: {e}")
@@ -1284,14 +1431,56 @@ def get_products(
     query = db.query(Product).filter(Product.price > 0)
     
     if category and category.lower() != "all":
-        query = query.filter(Product.category.ilike(category))
+        query_term = f"%{category}%"
+        query = query.filter(
+            Product.category.ilike(query_term) |
+            Product.subcategory.ilike(query_term) |
+            Product.sub_subcategory.ilike(query_term)
+        )
     
     if search:
-        query = query.filter(
-            (Product.name.ilike(f"%{search}%")) | 
-            (Product.description.ilike(f"%{search}%")) |
-            (Product.category.ilike(f"%{search}%"))
-        )
+        search_tokens = [token.strip() for token in re.split(r'[\s,;&|/]+', search) if token.strip()]
+        if search_tokens:
+            token_conditions = []
+            relevance_cases = []
+            beverage_boost = None
+
+            for token in search_tokens:
+                token_like = f"%{token}%"
+                name_match = Product.name.ilike(token_like)
+                desc_match = Product.description.ilike(token_like)
+                cat_match = Product.category.ilike(token_like)
+                subcat_match = Product.subcategory.ilike(token_like)
+                sub_subcat_match = Product.sub_subcategory.ilike(token_like)
+
+                token_conditions.append(name_match | desc_match | cat_match | subcat_match | sub_subcat_match)
+
+                if beverage_boost is None and any(k in token.lower() for k in ['coffee', 'tea', 'juice', 'beverage']):
+                    beverage_boost = Product.category.ilike('%beverage%')
+
+                relevance_cases.extend([
+                    (cat_match, 4),
+                    (subcat_match, 3),
+                    (sub_subcat_match, 2),
+                    (name_match, 1),
+                    (desc_match, 0)
+                ])
+
+            combined_search = token_conditions[0]
+            for condition in token_conditions[1:]:
+                combined_search = combined_search | condition
+
+            query = query.filter(combined_search)
+
+            if beverage_boost is not None:
+                relevance = case([
+                    (beverage_boost, 5),
+                    *relevance_cases
+                ], else_=0)
+            else:
+                relevance = case(relevance_cases, else_=0)
+
+            query = query.order_by(relevance.desc())
     
     total = query.count()
     products = query.offset(skip).limit(limit).all()
@@ -1325,11 +1514,34 @@ def search_products(
     limit: int = 25, 
     db: Session = Depends(get_db)
 ):
-    search_query = db.query(Product).filter(Product.price > 0).filter(
-        (Product.name.ilike(f"%{query}%")) | 
-        (Product.description.ilike(f"%{query}%")) |
-        (Product.category.ilike(f"%{query}%"))
-    )
+    name_match = Product.name.ilike(f"%{query}%")
+    desc_match = Product.description.ilike(f"%{query}%")
+    cat_match = Product.category.ilike(f"%{query}%")
+    subcat_match = Product.subcategory.ilike(f"%{query}%")
+    sub_subcat_match = Product.sub_subcategory.ilike(f"%{query}%")
+    qlow = (query or '').lower()
+    beverage_boost = None
+    if any(k in qlow for k in ['coffee', 'tea', 'juice', 'beverage']):
+        beverage_boost = Product.category.ilike('%beverage%')
+    search_query = db.query(Product).filter(Product.price > 0).filter(name_match | desc_match | cat_match | subcat_match | sub_subcat_match)
+    if beverage_boost is not None:
+        relevance = case([
+            (beverage_boost, 5),
+            (cat_match, 4),
+            (subcat_match, 3),
+            (sub_subcat_match, 2),
+            (name_match, 1),
+            (desc_match, 0)
+        ], else_=0)
+    else:
+        relevance = case([
+            (cat_match, 4),
+            (subcat_match, 3),
+            (sub_subcat_match, 2),
+            (name_match, 1),
+            (desc_match, 0)
+        ], else_=0)
+    search_query = search_query.order_by(relevance.desc())
     total = search_query.count()
     products = search_query.offset(skip).limit(limit).all()
     
@@ -1715,7 +1927,7 @@ def track_product_click(user_id: int, product_id: int, db: Session = Depends(get
     db.commit()
     return {"status": "click tracked"}
 
-@app.get("/api/products/{product_id}/similar", response_model=List[ProductResponse])
+@app.get("/api/products/{product_id}/similar")
 def get_similar_products(product_id: int, db: Session = Depends(get_db)):
     """Get visually similar products using image features"""
     engine = RecommendationEngine(db)

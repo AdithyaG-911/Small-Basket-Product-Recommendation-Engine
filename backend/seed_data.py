@@ -6,7 +6,7 @@ Run this before starting the app when you want fresh catalog data.
 
 import csv
 import os
-from main import SessionLocal, Product, engine, Base
+from main import SessionLocal, Product, engine, Base, normalize_category_path
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -89,9 +89,12 @@ def seed_from_csv(csv_file=None, limit=50, replace=False):
                     if parsed_price <= 0:
                         parsed_price = 100.0  # Never allow zero or negative prices
 
+                    category, subcategory, sub_subcategory = normalize_category_path(category)
                     product = Product(
                         name=sku_name[:200],
                         category=category[:100],
+                        subcategory=subcategory[:100] if subcategory else None,
+                        sub_subcategory=sub_subcategory[:100] if sub_subcategory else None,
                         description=description[:500],
                         price=parsed_price,
                         image_url=image_url,
@@ -132,13 +135,16 @@ def seed_synthetic(num_products=100):
 
         for i in range(num_products):
             category = categories[i % len(categories)]
+            parsed_category, parsed_subcategory, parsed_sub_subcategory = normalize_category_path(category)
             product_type = product_types[i % len(product_types)]
             product_name = f"{product_type} {category.split()[0]} Item {i + 1}"
             image_url = get_image_url(category, product_name, i)
 
             product = Product(
                 name=product_name,
-                category=category,
+                category=parsed_category,
+                subcategory=parsed_subcategory,
+                sub_subcategory=parsed_sub_subcategory,
                 description=f'High quality {category.lower()} product with amazing features. Perfect for daily use. Best seller in its category.',
                 price=float(50 + (i % 500)),
                 image_url=image_url,

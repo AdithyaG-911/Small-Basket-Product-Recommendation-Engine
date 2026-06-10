@@ -7,13 +7,13 @@ const DARK = 'rgb(32,32,32)'
 
 const BANKS = ['State Bank of India','HDFC Bank','ICICI Bank','Axis Bank','Kotak Mahindra','Punjab National Bank','Bank of Baroda','Canara Bank','Union Bank','Yes Bank']
 const WALLETS = [
-  { name: 'PhonePe', color: '#5f259f', emoji: '📱' },
-  { name: 'Google Pay', color: '#4285f4', emoji: '🅖' },
-  { name: 'Paytm', color: '#00b9f1', emoji: '💰' },
-  { name: 'Amazon Pay', color: '#ff9900', emoji: '🛒' },
+  { name: 'PhonePe', color: '#5f259f', brandColor: '#6c2fb6' },
+  { name: 'Google Pay', color: '#4285f4', brandColor: '#000' },
+  { name: 'Paytm', color: '#00b9f1', brandColor: '#00b9f1' },
+  { name: 'Amazon Pay', color: '#ff9900', brandColor: '#ff9900' },
 ]
 
-export default function PaymentPage({ address, slot, cart, onBack, onCompletePayment, checkoutLoading }) {
+export default function PaymentPage({ address, slot, cart, walletBalance = 0, onBack, onHomeClick, onCompletePayment, checkoutLoading }) {
   const [tab, setTab] = useState('upi')
   const [upiId, setUpiId] = useState('')
   const [cardNum, setCardNum] = useState('')
@@ -22,6 +22,13 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
   const [cardCvv, setCardCvv] = useState('')
   const [selectedBank, setSelectedBank] = useState('')
   const [selectedWallet, setSelectedWallet] = useState('')
+  const [paymentError, setPaymentError] = useState('')
+  const [confirmModal, setConfirmModal] = useState({ open: false, title: '', message: '', action: null })
+
+  const closeConfirmModal = () => setConfirmModal({ open: false, title: '', message: '', action: null })
+  const requestConfirmation = (title, message, action) => {
+    setConfirmModal({ open: true, title, message, action })
+  }
 
   const subtotal = cart.reduce((s, i) => s + (i.product?.price || 0) * i.quantity, 0)
   const deliveryCharge = subtotal >= 99 ? 0 : 25
@@ -37,7 +44,8 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
       return selectedBank ? `Netbanking - ${selectedBank}` : ''
     }
     if (tab === 'wallet') {
-      return selectedWallet ? `Wallet - ${selectedWallet}` : ''
+      if (selectedWallet) return `Wallet - ${selectedWallet}`
+      return walletBalance >= total ? 'Wallet Balance' : ''
     }
     if (tab === 'upi') {
       if (upiId.trim()) return `UPI - ${upiId}`
@@ -49,11 +57,95 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
   }
 
   const handlePayNow = () => {
+    setPaymentError('')
     const method = getSelectedPaymentMethod()
-    if (tab !== 'cod' && !method) {
+
+    if (tab === 'upi') {
+      if (!upiId.trim() && !selectedWallet) {
+        setPaymentError('Enter a valid UPI ID or choose a UPI wallet app to continue.')
+        return
+      }
+      if (upiId && !upiId.includes('@')) {
+        setPaymentError('Please enter a valid UPI ID in the format name@bank.')
+        return
+      }
+      if (selectedWallet) {
+        requestConfirmation(
+          'Confirm UPI Wallet Payment',
+          `Proceed to ${selectedWallet} to complete payment?`,
+          () => onCompletePayment(method, null)
+        )
+        return
+      }
+      requestConfirmation(
+        'Confirm UPI Payment',
+        `Pay ₹${total.toFixed(2)} using ${method}?`,
+        () => onCompletePayment(method, null)
+      )
       return
     }
-    onCompletePayment(method)
+
+    if (tab === 'card') {
+      const digits = (cardNum || '').replace(/\s+/g, '')
+      if (digits.length < 16) {
+        setPaymentError('Enter a valid 16-digit card number.')
+        return
+      }
+      if (!/^(0[1-9]|1[0-2])\/(\d{2})$/.test(cardExp)) {
+        setPaymentError('Enter expiry in MM/YY format.')
+        return
+      }
+      if (!/^[0-9]{3}$/.test(cardCvv)) {
+        setPaymentError('Enter a valid 3-digit CVV.')
+        return
+      }
+      requestConfirmation(
+        'Confirm Card Payment',
+        `Charge ₹${total.toFixed(2)} to your card now?`,
+        () => onCompletePayment(method, null)
+      )
+      return
+    }
+
+    if (tab === 'netbanking') {
+      if (!selectedBank) {
+        setPaymentError('Please select a bank to continue.')
+        return
+      }
+      requestConfirmation(
+        'Confirm Netbanking',
+        `Continue to ${selectedBank} to complete payment?`,
+        () => onCompletePayment(method, null)
+      )
+      return
+    }
+
+    if (tab === 'wallet') {
+      if (!selectedWallet && walletBalance < total) {
+        setPaymentError('Select a wallet or top-up your SmallBasket wallet before paying.')
+        return
+      }
+      if (selectedWallet) {
+        requestConfirmation(
+          'Confirm Wallet Payment',
+          `Open ${selectedWallet} to complete payment of ₹${total.toFixed(2)}?`,
+          () => onCompletePayment(method, null)
+        )
+        return
+      }
+      requestConfirmation(
+        'Confirm Wallet Balance Payment',
+        `Use your wallet balance of ₹${walletBalance.toFixed(2)} to pay ₹${total.toFixed(2)}?`,
+        () => onCompletePayment(method, total)
+      )
+      return
+    }
+
+    requestConfirmation(
+      'Confirm Checkout',
+      `Place order for ₹${total.toFixed(2)} using ${method}?`,
+      () => onCompletePayment(method, null)
+    )
   }
 
   const tabs = [
@@ -76,7 +168,7 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f6f0', fontFamily: 'ProximaNova,Helvetica,Arial,sans-serif' }}>
-      <CheckoutHeader step={3} selectedAddress={address} selectedSlot={slot} onChangeAddress={onBack} onChangeSlot={onBack} />
+      <CheckoutHeader step={3} selectedAddress={address} selectedSlot={slot} onChangeAddress={onBack} onChangeSlot={onBack} onHomeClick={onHomeClick} />
 
       <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '28px 40px', display: 'grid', gridTemplateColumns: '1fr 360px', gap: '24px', alignItems: 'start' }}>
 
@@ -109,12 +201,15 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
                   </div>
                   <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#888', fontWeight: 600 }}>Or pay with UPI apps</p>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
-                    {WALLETS.map(w => (
-                      <button key={w.name} type="button" onClick={() => setSelectedWallet(w.name)} style={{ padding: '12px 8px', borderRadius: '8px', border: selectedWallet === w.name ? `2px solid ${GREEN}` : '0.8px solid #ddd', background: selectedWallet === w.name ? '#f1f8e6' : '#fafafa', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ fontSize: '28px' }}>{w.emoji}</span>
-                        <span style={{ fontSize: '12px', fontWeight: 600, color: DARK }}>{w.name}</span>
-                      </button>
-                    ))}
+                      {WALLETS.map(w => (
+                        <button key={w.name} type="button" onClick={() => setSelectedWallet(w.name)} style={{ padding: '10px', borderRadius: '8px', border: selectedWallet === w.name ? `2px solid ${GREEN}` : '0.8px solid #ddd', background: selectedWallet === w.name ? '#f1f8e6' : '#fafafa', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                          <div style={{ width: 44, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', background: w.brandColor, color: '#fff', borderRadius: 6, fontWeight: 700, fontSize: 14 }}>
+                            {w.name === 'Google Pay' ? 'GPay' : w.name.replace(/\s+/g,'')}
+                          </div>
+                          <span style={{ fontSize: '12px', fontWeight: 600, color: DARK }}>{w.name}</span>
+                          <div style={{ fontSize: '11px', color: '#666' }}>Tap to use {w.name}</div>
+                        </button>
+                      ))}
                   </div>
                 </div>
               )}
@@ -166,14 +261,36 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
 
               {tab === 'wallet' && (
                 <div>
-                  <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: 700, color: DARK }}>Select Wallet</h3>
+                  <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: 700, color: DARK }}>SmallBasket Wallet</h3>
+                  <div style={{ border: '0.8px solid #dfe5dc', borderRadius: '12px', padding: '18px', marginBottom: '24px', background: '#f7fff1' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                      <div>
+                        <p style={{ margin: '0 0 8px', fontSize: '13px', color: '#666' }}>Available balance</p>
+                        <div style={{ fontSize: '36px', fontWeight: 800, color: 'rgb(118, 185, 0)' }}>₹{walletBalance.toFixed(2)}</div>
+                      </div>
+                      <div style={{ minWidth: '200px' }}>
+                        {walletBalance >= total ? (
+                          <button type="button" onClick={handlePayNow} style={{ width: '100%', padding: '14px', borderRadius: '8px', border: 'none', background: GREEN, color: '#fff', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                            Pay ₹{total.toFixed(2)} with Wallet Balance
+                          </button>
+                        ) : (
+                          <div style={{ padding: '14px 18px', background: '#fff4f2', borderRadius: '8px', border: '1px solid #ffd1c9', color: '#8e3300', fontSize: '14px' }}>
+                            Add ₹{Math.max(0, (total - walletBalance).toFixed(2))} more to use wallet balance for this order.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <p style={{ margin: '16px 0 0', fontSize: '13px', color: '#666' }}>Use your SmallBasket wallet anytime during checkout for instant payment and faster order confirmation.</p>
+                  </div>
+
+                  <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: 700, color: DARK }}>Other wallet apps</h3>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     {WALLETS.map(w => (
                       <button key={w.name} type="button" onClick={() => setSelectedWallet(w.name)} style={{ padding: '16px', borderRadius: '8px', border: selectedWallet === w.name ? `2px solid ${GREEN}` : '0.8px solid #ddd', background: selectedWallet === w.name ? '#f1f8e6' : '#fafafa', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', fontFamily: 'inherit' }}>
                         <span style={{ fontSize: '28px' }}>{w.emoji}</span>
                         <div style={{ textAlign: 'left' }}>
                           <div style={{ fontSize: '14px', fontWeight: 700, color: DARK }}>{w.name}</div>
-                          <div style={{ fontSize: '12px', color: '#888' }}>Balance: ₹0</div>
+                          <div style={{ fontSize: '12px', color: '#888' }}>Fast mobile checkout</div>
                         </div>
                       </button>
                     ))}
@@ -193,13 +310,20 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
               )}
 
               {/* Pay button */}
-              <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'row-reverse', gap: '12px' }}>
-                <button type="button" onClick={handlePayNow} disabled={checkoutLoading} style={{ height: '40px', width: '13.5rem', background: checkoutLoading ? '#ccc' : RED, color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 600, fontSize: '16px', cursor: checkoutLoading ? 'not-allowed' : 'pointer', letterSpacing: '0.25px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }}>
-                  {checkoutLoading ? 'Placing order…' : `Pay ₹${total.toFixed(2)}`}
-                </button>
-                <button type="button" onClick={onBack} style={{ height: '40px', padding: '0 20px', background: '#fff', border: '0.8px solid #ccc', borderRadius: '4px', color: '#555', fontWeight: 600, cursor: 'pointer', fontSize: '14px', fontFamily: 'inherit' }}>
-                  Back
-                </button>
+              <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'row-reverse', gap: '12px' }}>
+                  <button type="button" onClick={handlePayNow} disabled={checkoutLoading} style={{ height: '40px', width: '13.5rem', background: checkoutLoading ? '#ccc' : RED, color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 600, fontSize: '16px', cursor: checkoutLoading ? 'not-allowed' : 'pointer', letterSpacing: '0.25px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }}>
+                    {checkoutLoading ? 'Placing order…' : `Pay ₹${total.toFixed(2)}`}
+                  </button>
+                  <button type="button" onClick={onBack} style={{ height: '40px', padding: '0 20px', background: '#fff', border: '0.8px solid #ccc', borderRadius: '4px', color: '#555', fontWeight: 600, cursor: 'pointer', fontSize: '14px', fontFamily: 'inherit' }}>
+                    Back
+                  </button>
+                </div>
+                {paymentError && (
+                  <div style={{ background: '#ffe9e9', border: '1px solid #f4c2c2', borderRadius: '6px', color: '#8a1f1f', padding: '12px 14px', fontSize: '14px' }}>
+                    {paymentError}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -256,6 +380,24 @@ export default function PaymentPage({ address, slot, cart, onBack, onCompletePay
         </div>
 
       </div>
+      {confirmModal.open && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ width: '100%', maxWidth: '420px', background: '#fff', borderRadius: '20px', overflow: 'hidden', boxShadow: '0 38px 80px rgba(0,0,0,0.18)' }}>
+            <div style={{ padding: '24px' }}>
+              <h2 style={{ margin: 0, fontSize: '20px', color: DARK }}>{confirmModal.title}</h2>
+              <p style={{ margin: '12px 0 0', color: '#555', lineHeight: 1.6 }}>{confirmModal.message}</p>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', padding: '16px', borderTop: '1px solid #eee', justifyContent: 'flex-end', background: '#fafafa' }}>
+              <button type="button" onClick={closeConfirmModal} style={{ padding: '10px 18px', borderRadius: '8px', border: '1px solid #ccc', background: '#fff', color: '#333', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => { if (confirmModal.action) confirmModal.action(); closeConfirmModal(); }} style={{ padding: '10px 18px', borderRadius: '8px', border: 'none', background: GREEN, color: '#fff', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
